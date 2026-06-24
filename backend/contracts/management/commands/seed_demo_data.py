@@ -1,12 +1,14 @@
 from django.core.management.base import BaseCommand
 
 from contracts.models import (
+    Bitacora,
     ConceptoCatalogo,
     Contract,
     ContractDocument,
     ContractVersion,
     Contratista,
     Persona,
+    construir_firmas,
 )
 from users.models import User
 
@@ -71,6 +73,33 @@ class Command(BaseCommand):
                     dict(clave="CIM-002", descripcion="Concreto f'c=250 kg/cm2 en cimentación", unidad="m³", cantidad="480", precio_unitario="2750"),
                     dict(clave="EST-001", descripcion="Acero de refuerzo fy=4200 kg/cm2", unidad="ton", cantidad="32.5", precio_unitario="28500"),
                 ],
+                bitacora=dict(
+                    fecha_apertura="2024-01-15",
+                    nota_apertura=(
+                        "Se apertura la bitácora de obra del contrato GACM-2024-001 conforme a la LOPySRM. "
+                        "Presentes el residente de obra y el superintendente."
+                    ),
+                    notas=[
+                        dict(
+                            tipo="instruccion",
+                            contenido="Se instruye al contratista a iniciar trabajos de cimentación conforme al programa de obra autorizado.",
+                            autor="Diego Ramírez",
+                            fecha="2024-01-18",
+                        ),
+                        dict(
+                            tipo="respuesta",
+                            contenido="El superintendente confirma el inicio de trabajos de cimentación con el frente 1.",
+                            autor="Víctor Castro",
+                            fecha="2024-01-19",
+                        ),
+                        dict(
+                            tipo="observacion",
+                            contenido="La supervisión observa que el acero de refuerzo cumple con las especificaciones del proyecto.",
+                            autor="Arturo Mendoza",
+                            fecha="2024-01-25",
+                        ),
+                    ],
+                ),
             ),
             dict(
                 no_contrato="GACM-2024-002",
@@ -93,6 +122,18 @@ class Command(BaseCommand):
                     dict(bloque="catalogo", nombre="Catalogo-Conceptos-002.xlsx", formato="XLSX", tamano="560 KB", fecha="2024-03-02", subido_por="Diego Ramírez"),
                 ],
                 catalogo=[],
+                bitacora=dict(
+                    fecha_apertura="2024-03-01",
+                    nota_apertura="Se apertura la bitácora de obra del contrato GACM-2024-002 conforme a la LOPySRM.",
+                    notas=[
+                        dict(
+                            tipo="acuerdo",
+                            contenido="Se acuerda con el contratista el horario de trabajos nocturnos para no afectar operaciones.",
+                            autor="Diego Ramírez",
+                            fecha="2024-03-05",
+                        ),
+                    ],
+                ),
             ),
             dict(
                 no_contrato="GACM-2024-003",
@@ -136,12 +177,18 @@ class Command(BaseCommand):
                     dict(bloque="programa", nombre="Programa-Obra-004.pdf", formato="PDF", tamano="900 KB", fecha="2024-02-11", subido_por="Hugo Treviño"),
                 ],
                 catalogo=[],
+                bitacora=dict(
+                    fecha_apertura="2024-02-10",
+                    nota_apertura="Se apertura la bitácora de obra del contrato GACM-2024-004.",
+                    notas=[],
+                ),
             ),
         ]
 
         for data in contratos:
             documentos = data.pop("documentos")
             catalogo = data.pop("catalogo")
+            bitacora_data = data.pop("bitacora", None)
             contrato, created = Contract.objects.get_or_create(no_contrato=data["no_contrato"], defaults=data)
             if not created:
                 self.stdout.write(f"Ya existía: {contrato.no_contrato}")
@@ -160,6 +207,20 @@ class Command(BaseCommand):
                 ContractDocument.objects.create(contrato=contrato, subido_por=self._buscar_usuario(nombre_autor), **doc)
             for concepto in catalogo:
                 ConceptoCatalogo.objects.create(contrato=contrato, **concepto)
+
+            if bitacora_data:
+                notas = bitacora_data.pop("notas")
+                bitacora = Bitacora.objects.create(contrato=contrato, abierta=True, **bitacora_data)
+                for numero, nota in enumerate(notas, start=1):
+                    nombre_autor = nota.pop("autor")
+                    autor = self._buscar_usuario(nombre_autor)
+                    bitacora.notas.create(
+                        numero=numero,
+                        autor=autor,
+                        rol=autor.role,
+                        firmas=construir_firmas(contrato, autor),
+                        **nota,
+                    )
 
             self.stdout.write(self.style.SUCCESS(f"Creado: {contrato.no_contrato}"))
 
