@@ -20,9 +20,9 @@ export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const u = login(email, password)
+    const u = await login(email, password)
     if (u) {
       toast.success(`Bienvenido, ${u.name}`)
       router.push("/contratos")
@@ -31,10 +31,10 @@ export default function LoginPage() {
     }
   }
 
-  function quickLogin(userEmail: string) {
+  async function quickLogin(userEmail: string) {
     setEmail(userEmail)
     setPassword("demo123")
-    const u = login(userEmail, "demo123")
+    const u = await login(userEmail, "demo123")
     if (u) router.push("/contratos")
   }
 

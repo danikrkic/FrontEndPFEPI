@@ -22,7 +22,6 @@ import {
   ORDENES_PAGO,
   RESIDENTES,
   SUPERVISORES,
-  USERS,
 } from "./mock-data"
 import type {
   Anticipo,
@@ -47,10 +46,23 @@ import type {
   User,
 } from "./types"
 import { calcularDesgloseEstimacion, aplicarAjusteCantidades, sumarDias, hoy } from "./calculos"
+import { clearTokens, loginRequest, meRequest, type ApiUser } from "./api"
+
+function toUser(apiUser: ApiUser): User {
+  return {
+    id: String(apiUser.id),
+    name: apiUser.name,
+    email: apiUser.email,
+    password: "",
+    role: apiUser.role as Role,
+    initials: apiUser.initials,
+    personaId: apiUser.persona_id ?? undefined,
+  }
+}
 
 interface AppState {
   user: User | null
-  login: (email: string, password: string) => User | null
+  login: (email: string, password: string) => Promise<User | null>
   logout: () => void
 
   contracts: Contract[]
@@ -121,28 +133,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [solicitudesActivacion, setSolicitudesActivacion] = useState<SolicitudActivacion[]>([])
 
   useEffect(() => {
-    const stored = typeof window !== "undefined" ? localStorage.getItem("gacm_user") : null
-    if (stored) {
-      const u = USERS.find((x) => x.id === stored)
-      if (u) setUser(u)
-    }
+    meRequest().then((apiUser) => {
+      if (apiUser) setUser(toUser(apiUser))
+    })
   }, [])
 
-  const login = useCallback((email: string, password: string) => {
-    const u = USERS.find(
-      (x) => x.email.toLowerCase() === email.toLowerCase() && x.password === password,
-    )
-    if (u) {
-      setUser(u)
-      localStorage.setItem("gacm_user", u.id)
-      return u
-    }
-    return null
+  const login = useCallback(async (email: string, password: string) => {
+    const apiUser = await loginRequest(email, password)
+    if (!apiUser) return null
+    const u = toUser(apiUser)
+    setUser(u)
+    return u
   }, [])
 
   const logout = useCallback(() => {
     setUser(null)
-    localStorage.removeItem("gacm_user")
+    clearTokens()
   }, [])
 
   const addContract = useCallback<AppState["addContract"]>((c) => {
