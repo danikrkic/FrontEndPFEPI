@@ -46,6 +46,9 @@ class Contract(models.Model):
     contratista = models.ForeignKey(Contratista, on_delete=models.PROTECT, related_name="contratos")
     residente = models.ForeignKey(Persona, on_delete=models.PROTECT, related_name="contratos_como_residente")
     supervisor = models.ForeignKey(Persona, on_delete=models.PROTECT, related_name="contratos_como_supervisor")
+    superintendente = models.ForeignKey(
+        Persona, on_delete=models.PROTECT, related_name="contratos_como_superintendente"
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.REGISTRADO)
     version = models.PositiveIntegerField(default=1)
     avance_programado = models.PositiveSmallIntegerField(default=0)

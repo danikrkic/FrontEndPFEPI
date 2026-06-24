@@ -40,7 +40,7 @@ class ContractVersionInline(admin.TabularInline):
 
 @admin.register(Contract)
 class ContractAdmin(admin.ModelAdmin):
-    list_display = ("no_contrato", "objeto", "status", "contratista", "residente", "supervisor")
+    list_display = ("no_contrato", "objeto", "status", "contratista", "residente", "supervisor", "superintendente")
     list_filter = ("status",)
     search_fields = ("no_contrato", "objeto")
     inlines = [ConceptoCatalogoInline, ContractDocumentInline, ContractVersionInline]

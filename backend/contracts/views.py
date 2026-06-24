@@ -1,11 +1,13 @@
 from datetime import date
 
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from users.models import Role
 from users.permissions import HasRolePermission
 
 from .models import ConceptoCatalogo, Contract, ContractDocument, Contratista, Persona, SolicitudActivacion
@@ -31,9 +33,6 @@ class PersonaViewSet(viewsets.ModelViewSet):
 
 
 class ContractViewSet(viewsets.ModelViewSet):
-    queryset = Contract.objects.select_related(
-        "contratista", "residente", "supervisor", "solicitud_activacion"
-    ).prefetch_related("documentos", "catalogo_conceptos", "versiones")
     serializer_class = ContractSerializer
     permission_classes = [IsAuthenticated, HasRolePermission]
 
@@ -43,9 +42,30 @@ class ContractViewSet(viewsets.ModelViewSet):
         "revisar_activacion": "contrato.revisar-activacion",
     }
 
+    # Roles que solo deben ver los contratos donde están asignados como
+    # residente/supervisor/superintendente. dependencia y finanzas son roles
+    # de control transversal y ven todos los contratos.
+    ROLES_VISIBILIDAD_RESTRINGIDA = {Role.RESIDENTE, Role.SUPERVISION, Role.SUPERINTENDENTE}
+
     def get_permissions(self):
         self.required_action = self.ACTION_PERMISSIONS.get(self.action)
         return [permission() for permission in self.permission_classes]
+
+    def get_queryset(self):
+        qs = Contract.objects.select_related(
+            "contratista", "residente", "supervisor", "superintendente", "solicitud_activacion"
+        ).prefetch_related("documentos", "catalogo_conceptos", "versiones")
+
+        user = self.request.user
+        if user.role in self.ROLES_VISIBILIDAD_RESTRINGIDA:
+            if not user.persona_id:
+                return qs.none()
+            qs = qs.filter(
+                Q(residente_id=user.persona_id)
+                | Q(supervisor_id=user.persona_id)
+                | Q(superintendente_id=user.persona_id)
+            )
+        return qs
 
     @action(detail=True, methods=["get", "post"], url_path="documentos")
     def documentos(self, request, pk=None):

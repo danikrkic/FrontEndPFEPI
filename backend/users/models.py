@@ -23,7 +23,10 @@ class User(AbstractUser):
         null=True,
         blank=True,
         related_name="usuarios",
-        help_text="Vincula esta cuenta a una Persona (residente) para control de acceso a bitácora.",
+        help_text=(
+            "Vincula esta cuenta a una Persona (residente, supervisor o superintendente) "
+            "para controlar a qué contratos tiene acceso."
+        ),
     )
 
     def __str__(self) -> str:

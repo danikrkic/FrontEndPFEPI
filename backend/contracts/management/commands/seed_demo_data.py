@@ -29,6 +29,11 @@ SUPERVISORES = [
     dict(nombre="Ricardo Salas", rfc="SARR751130HJC", telefono="55-4001-2003", correo="ricardo.salas@gacm.mx"),
 ]
 
+SUPERINTENDENTES = [
+    dict(nombre="Víctor Castro", rfc="CAVI780815HDF", telefono="55-5001-3001", correo="victor.castro@contratista.mx"),
+    dict(nombre="Laura Sánchez", rfc="SALA830624MDF", telefono="55-5001-3002", correo="laura.sanchez@contratista.mx"),
+]
+
 
 class Command(BaseCommand):
     help = "Crea contratistas, personas y contratos de demo replicando lib/mock-data.ts del frontend."
@@ -37,6 +42,7 @@ class Command(BaseCommand):
         contratistas = [self._get_or_create(Contratista, c) for c in CONTRATISTAS]
         residentes = [self._get_or_create(Persona, p) for p in RESIDENTES]
         supervisores = [self._get_or_create(Persona, p) for p in SUPERVISORES]
+        superintendentes = [self._get_or_create(Persona, p) for p in SUPERINTENDENTES]
 
         contratos = [
             dict(
@@ -51,6 +57,7 @@ class Command(BaseCommand):
                 contratista=contratistas[0],
                 residente=residentes[0],
                 supervisor=supervisores[0],
+                superintendente=superintendentes[0],
                 status=Contract.Status.ACTIVO,
                 avance_programado=62,
                 avance_real=58,
@@ -77,6 +84,7 @@ class Command(BaseCommand):
                 contratista=contratistas[1],
                 residente=residentes[0],
                 supervisor=supervisores[1],
+                superintendente=superintendentes[1],
                 status=Contract.Status.EN_CIERRE,
                 avance_programado=100,
                 avance_real=96,
@@ -98,6 +106,7 @@ class Command(BaseCommand):
                 contratista=contratistas[2],
                 residente=residentes[1],
                 supervisor=supervisores[2],
+                superintendente=superintendentes[1],
                 status=Contract.Status.REGISTRADO,
                 avance_programado=0,
                 avance_real=0,
@@ -118,6 +127,7 @@ class Command(BaseCommand):
                 contratista=contratistas[3],
                 residente=residentes[2],
                 supervisor=supervisores[0],
+                superintendente=superintendentes[0],
                 status=Contract.Status.ACTIVO,
                 avance_programado=80,
                 avance_real=71,

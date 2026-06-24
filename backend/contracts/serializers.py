@@ -83,6 +83,10 @@ class ContractSerializer(serializers.ModelSerializer):
     supervisor_id = serializers.PrimaryKeyRelatedField(
         queryset=Persona.objects.all(), source="supervisor", write_only=True
     )
+    superintendente = PersonaSerializer(read_only=True)
+    superintendente_id = serializers.PrimaryKeyRelatedField(
+        queryset=Persona.objects.all(), source="superintendente", write_only=True
+    )
     documentos = ContractDocumentSerializer(many=True, read_only=True)
     catalogo_conceptos = ConceptoCatalogoSerializer(many=True, read_only=True)
     versiones = ContractVersionSerializer(many=True, read_only=True)
@@ -106,6 +110,8 @@ class ContractSerializer(serializers.ModelSerializer):
             "residente_id",
             "supervisor",
             "supervisor_id",
+            "superintendente",
+            "superintendente_id",
             "status",
             "version",
             "avance_programado",
