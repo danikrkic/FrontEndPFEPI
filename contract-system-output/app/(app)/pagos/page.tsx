@@ -37,9 +37,13 @@ export default function PagosPage() {
     [ordenesPago],
   )
 
-  function handleAttend(id: string) {
-    attendPago(id)
-    toast.success("Orden de pago marcada como dispersada")
+  async function handleAttend(id: string) {
+    try {
+      await attendPago(id)
+      toast.success("Orden de pago marcada como dispersada")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo dispersar la orden de pago")
+    }
   }
 
   return (

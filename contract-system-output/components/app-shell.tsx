@@ -8,12 +8,20 @@ import { AppSidebar } from "./app-sidebar"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { user } = useApp()
+  const { user, loading } = useApp()
   const router = useRouter()
 
   useEffect(() => {
-    if (!user) router.replace("/login")
-  }, [user, router])
+    if (!loading && !user) router.replace("/login")
+  }, [user, loading, router])
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted-foreground">
+        Cargando...
+      </div>
+    )
+  }
 
   if (!user) {
     return (

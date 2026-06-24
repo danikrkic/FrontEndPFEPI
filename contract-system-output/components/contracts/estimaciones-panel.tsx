@@ -362,19 +362,23 @@ function EstimacionCard({ estimacion: e }: { estimacion: Estimacion }) {
                       </table>
                     </div>
                     <form
-                      onSubmit={(ev) => {
+                      onSubmit={async (ev) => {
                         ev.preventDefault()
                         const decision = (ev.nativeEvent as SubmitEvent)
                           .submitter as HTMLButtonElement
                         const obs = String(new FormData(ev.currentTarget).get("obs"))
                         const status = decision.value as "aceptada" | "rechazada"
-                        reviewEstimacion(e.id, status, obs)
-                        toast.success(
-                          status === "aceptada"
-                            ? "Estimación aceptada. Se generó orden de pago."
-                            : "Estimación rechazada.",
-                        )
-                        setReviewOpen(false)
+                        try {
+                          await reviewEstimacion(e.id, status, obs)
+                          toast.success(
+                            status === "aceptada"
+                              ? "Estimación aceptada. Se generó orden de pago."
+                              : "Estimación rechazada.",
+                          )
+                          setReviewOpen(false)
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "No se pudo revisar la estimación")
+                        }
                       }}
                       className="grid gap-3"
                     >
@@ -448,9 +452,10 @@ function NuevaEstimacionDialog({
   contract: Contract
   anticipo: Anticipo | null
 }) {
-  const { addEstimacion, user } = useApp()
+  const { addEstimacion } = useApp()
   const [open, setOpen] = useState(false)
   const [importeBruto, setImporteBruto] = useState("")
+  const [submitting, setSubmitting] = useState(false)
 
   const desglose = useMemo(() => {
     const n = parseFloat(importeBruto) || 0
@@ -471,24 +476,29 @@ function NuevaEstimacionDialog({
           <DialogTitle>Registrar estimación de obra</DialogTitle>
         </DialogHeader>
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
             const fd = new FormData(e.currentTarget)
-            addEstimacion({
-              contratoId: contract.id,
-              periodoInicio: String(fd.get("periodoInicio")),
-              periodoFin: String(fd.get("periodoFin")),
-              importeBruto: Number(fd.get("importeBruto")),
-              caratula: String(fd.get("caratula")),
-              numerosGeneradores: String(fd.get("generadores")),
-              registroFotografico: Number(fd.get("fotos")),
-              notasSoporte: Number(fd.get("notas")),
-              creadaPor: user?.name ?? "",
-              fechaCreacion: new Date().toISOString().slice(0, 10),
-            })
-            toast.success("Estimación registrada. Pendiente de revisión.")
-            setImporteBruto("")
-            setOpen(false)
+            setSubmitting(true)
+            try {
+              await addEstimacion({
+                contratoId: contract.id,
+                periodoInicio: String(fd.get("periodoInicio")),
+                periodoFin: String(fd.get("periodoFin")),
+                importeBruto: Number(fd.get("importeBruto")),
+                caratula: String(fd.get("caratula")),
+                numerosGeneradores: String(fd.get("generadores")),
+                registroFotografico: Number(fd.get("fotos")),
+                notasSoporte: Number(fd.get("notas")),
+              })
+              toast.success("Estimación registrada. Pendiente de revisión.")
+              setImporteBruto("")
+              setOpen(false)
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "No se pudo registrar la estimación")
+            } finally {
+              setSubmitting(false)
+            }
           }}
           className="grid gap-3"
         >
@@ -551,7 +561,9 @@ function NuevaEstimacionDialog({
             </div>
           </div>
           <DialogFooter>
-            <Button type="submit">Registrar estimación</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Registrando..." : "Registrar estimación"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

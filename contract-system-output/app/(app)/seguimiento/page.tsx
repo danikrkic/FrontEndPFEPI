@@ -204,24 +204,26 @@ function AvancesTab({ contratoId }: { contratoId: string }) {
     [avances, contratoId, filtro],
   )
 
-  function submit() {
+  async function submit() {
     if (!descripcion.trim()) {
       toast.error("Describe el avance o incidencia")
       return
     }
-    addAvance({
-      contratoId,
-      tipo,
-      descripcion,
-      evidencia: evidencia || "Sin evidencia adjunta",
-      autor: user?.name ?? "—",
-      fecha: new Date().toISOString().slice(0, 10),
-    })
-    toast.success("Registro guardado")
-    setDescripcion("")
-    setEvidencia("")
-    setTipo("avance")
-    setOpen(false)
+    try {
+      await addAvance({
+        contratoId,
+        tipo,
+        descripcion,
+        evidencia: evidencia || "Sin evidencia adjunta",
+      })
+      toast.success("Registro guardado")
+      setDescripcion("")
+      setEvidencia("")
+      setTipo("avance")
+      setOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo guardar el registro")
+    }
   }
 
   return (
@@ -338,24 +340,26 @@ function IncumplimientosTab({ contratoId }: { contratoId: string }) {
     [incumplimientos, contratoId],
   )
 
-  function submit() {
+  async function submit() {
     if (!descripcion.trim()) {
       toast.error("Describe el incumplimiento")
       return
     }
-    addIncumplimiento({
-      contratoId,
-      tipo,
-      descripcion,
-      evidenciaRef: evidenciaRef || "Sin referencia",
-      autor: user?.name ?? "—",
-      fecha: new Date().toISOString().slice(0, 10),
-    })
-    toast.success("Incumplimiento registrado")
-    setDescripcion("")
-    setEvidenciaRef("")
-    setTipo("atraso")
-    setOpen(false)
+    try {
+      await addIncumplimiento({
+        contratoId,
+        tipo,
+        descripcion,
+        evidenciaRef: evidenciaRef || "Sin referencia",
+      })
+      toast.success("Incumplimiento registrado")
+      setDescripcion("")
+      setEvidenciaRef("")
+      setTipo("atraso")
+      setOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo registrar el incumplimiento")
+    }
   }
 
   return (
@@ -465,20 +469,19 @@ function MinutasTab({ contratoId }: { contratoId: string }) {
     [minutas, contratoId],
   )
 
-  function submit() {
+  async function submit() {
     if (!form.titulo.trim() || !form.acuerdos.trim()) {
       toast.error("Captura al menos el título y los acuerdos")
       return
     }
-    addMinuta({
-      contratoId,
-      ...form,
-      autor: user?.name ?? "—",
-      fecha: new Date().toISOString().slice(0, 10),
-    })
-    toast.success("Minuta registrada")
-    setForm({ titulo: "", participantes: "", acuerdos: "", observaciones: "", compromisos: "" })
-    setOpen(false)
+    try {
+      await addMinuta({ contratoId, ...form })
+      toast.success("Minuta registrada")
+      setForm({ titulo: "", participantes: "", acuerdos: "", observaciones: "", compromisos: "" })
+      setOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo registrar la minuta")
+    }
   }
 
   return (

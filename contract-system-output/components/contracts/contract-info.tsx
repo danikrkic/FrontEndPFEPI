@@ -66,6 +66,18 @@ export function ContractInfo({ contract }: { contract: Contract }) {
           <Row label="Correo" value={contract.supervisor.correo} />
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Superintendente</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <Row label="Nombre" value={contract.superintendente.nombre} />
+          <Row label="RFC" value={contract.superintendente.rfc} />
+          <Row label="Teléfono" value={contract.superintendente.telefono} />
+          <Row label="Correo" value={contract.superintendente.correo} />
+        </CardContent>
+      </Card>
     </div>
   )
 }

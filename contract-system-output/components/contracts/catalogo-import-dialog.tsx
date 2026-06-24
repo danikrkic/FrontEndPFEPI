@@ -103,18 +103,16 @@ export function CatalogoImportDialog({ contract }: { contract: Contract }) {
   }, [filas, mapping])
 
   // Paso 4: confirmar
-  const handleConfirmar = useCallback(() => {
+  const handleConfirmar = useCallback(async () => {
     if (!resultado) return
     const conceptos = filasAConceptos(resultado.filas)
-    const tieneExistente = contract.catalogoConceptos.length > 0
-    if (tieneExistente) {
-      // El versionado real ocurre en store (aprobarConvenio/setCatalogo).
-      // Aquí solo avisamos y reemplazamos en mock.
-      toast.warning("El catálogo anterior se conserva en el historial de versiones del contrato.")
+    try {
+      await setCatalogoConceptos(contract.id, conceptos)
+      toast.success(`${conceptos.length} conceptos importados al catálogo`)
+      handleClose(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo importar el catálogo")
     }
-    setCatalogoConceptos(contract.id, conceptos)
-    toast.success(`${conceptos.length} conceptos importados al catálogo`)
-    handleClose(false)
   }, [resultado, contract, setCatalogoConceptos, handleClose])
 
   const conceptosOk = useMemo(

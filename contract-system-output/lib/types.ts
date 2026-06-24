@@ -60,6 +60,7 @@ export interface ContractDocument {
   id: string
   bloque: DocBlock
   nombre: string
+  archivo: string
   formato: string
   tamano: string
   fecha: string
@@ -113,6 +114,7 @@ export interface Contract {
   contratista: Contratista
   residente: Persona
   supervisor: Persona
+  superintendente: Persona
   status: ContractStatus
   version: number
   avanceProgramado: number
@@ -148,6 +150,7 @@ export interface BitacoraNote {
   rol: Role
   fecha: string
   firmas: NotaFirma[]
+  fotos: string[]
 }
 
 export interface Bitacora {
@@ -340,6 +343,8 @@ export interface Garantia {
   documento: ContractDocument | null
   registradoPor: string
   fechaRegistro: string
+  liberadaPor: string | null
+  fechaLiberacion: string | null
 }
 
 /** Calcula el status de una garantía a partir de su fechaVigencia.

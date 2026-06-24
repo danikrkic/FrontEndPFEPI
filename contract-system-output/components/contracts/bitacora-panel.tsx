@@ -215,6 +215,22 @@ export function BitacoraPanel({ contract }: { contract: Contract }) {
                   Autor: {n.autor} · {ROLE_LABELS[n.rol]}
                 </p>
               </div>
+              {n.fotos.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {n.fotos.map((url, i) => (
+                    <a
+                      key={i}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block h-16 w-16 overflow-hidden rounded-md border border-border"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt={`Fotografía ${i + 1} de la nota #${n.numero}`} className="h-full w-full object-cover" />
+                    </a>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         ))}
@@ -233,9 +249,10 @@ function AperturaDialog({
   onOpen,
 }: {
   contratoId: string
-  onOpen: (id: string, nota: string) => void
+  onOpen: (id: string, nota: string) => Promise<void>
 }) {
   const [open, setOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -249,12 +266,19 @@ function AperturaDialog({
           <DialogTitle>Aperturar bitácora de obra</DialogTitle>
         </DialogHeader>
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
             const nota = String(new FormData(e.currentTarget).get("nota"))
-            onOpen(contratoId, nota)
-            toast.success("Bitácora aperturada correctamente")
-            setOpen(false)
+            setSubmitting(true)
+            try {
+              await onOpen(contratoId, nota)
+              toast.success("Bitácora aperturada correctamente")
+              setOpen(false)
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "No se pudo aperturar la bitácora")
+            } finally {
+              setSubmitting(false)
+            }
           }}
           className="grid gap-3"
         >
@@ -269,7 +293,9 @@ function AperturaDialog({
             />
           </div>
           <DialogFooter>
-            <Button type="submit">Aperturar</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Aperturando..." : "Aperturar"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -287,21 +313,17 @@ function NotaDialog({
   const { user } = useApp()
   const [open, setOpen] = useState(false)
   const [tipo, setTipo] = useState<NoteType>("instruccion")
+  const [submitting, setSubmitting] = useState(false)
 
   const autorNombre = user?.name ?? ""
   const responsables = useMemo(() => {
     const lista = [
       { responsable: "Residente de Obra", nombre: contract.residente.nombre },
+      { responsable: "Superintendente", nombre: contract.superintendente.nombre },
       { responsable: "Supervisión", nombre: contract.supervisor.nombre },
     ]
     return lista.filter((r) => r.nombre !== autorNombre)
   }, [contract, autorNombre])
-
-  const sugerirFirma = (nombre: string) =>
-    nombre
-      .split(" ")
-      .map((p, i) => (i === 0 ? p[0] + "." : p))
-      .join(" ")
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -316,32 +338,25 @@ function NotaDialog({
           <DialogTitle>Registrar nota en bitácora</DialogTitle>
         </DialogHeader>
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
             const fd = new FormData(e.currentTarget)
             if (!user) return
-            const firmas = [
-              {
-                responsable: "Autor",
-                nombre: autorNombre,
-                firma: String(fd.get("firma-autor")),
-              },
-              ...responsables.map((r, i) => ({
-                responsable: r.responsable,
-                nombre: r.nombre,
-                firma: String(fd.get(`firma-${i}`)),
-              })),
-            ]
-            addNote(contract.id, {
-              tipo,
-              contenido: String(fd.get("contenido")),
-              autor: autorNombre,
-              rol: user.role,
-              fecha: new Date().toISOString().slice(0, 10),
-              firmas,
-            })
-            toast.success("Nota registrada con las firmas de los responsables")
-            setOpen(false)
+            const fotos = (fd.getAll("fotos") as File[]).filter((f) => f.size > 0)
+            setSubmitting(true)
+            try {
+              await addNote(
+                contract.id,
+                { tipo, contenido: String(fd.get("contenido")) },
+                fotos.length > 0 ? fotos : undefined,
+              )
+              toast.success("Nota registrada con las firmas de los responsables")
+              setOpen(false)
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "No se pudo registrar la nota")
+            } finally {
+              setSubmitting(false)
+            }
           }}
           className="grid gap-3"
         >
@@ -364,41 +379,22 @@ function NotaDialog({
             <Label htmlFor="contenido">Contenido</Label>
             <Textarea id="contenido" name="contenido" rows={4} required />
           </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="fotos">Fotografías (opcional)</Label>
+            <Input id="fotos" name="fotos" type="file" accept="image/*" multiple />
+          </div>
 
-          <div className="rounded-md border border-border p-3">
-            <p className="mb-2 text-sm font-medium text-foreground">
-              Firmas de los responsables
+          <div className="rounded-md border border-border bg-muted/40 p-3">
+            <p className="text-xs text-muted-foreground">
+              La nota quedará firmada automáticamente por ti ({autorNombre}) y por{" "}
+              {responsables.map((r) => r.nombre).join(", ")}, conforme a la LOPySRM.
             </p>
-            <div className="grid gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs" htmlFor="firma-autor">
-                  Autor — {autorNombre}
-                </Label>
-                <Input
-                  id="firma-autor"
-                  name="firma-autor"
-                  required
-                  defaultValue={sugerirFirma(autorNombre)}
-                />
-              </div>
-              {responsables.map((r, i) => (
-                <div key={i} className="flex flex-col gap-1.5">
-                  <Label className="text-xs" htmlFor={`firma-${i}`}>
-                    {r.responsable} — {r.nombre}
-                  </Label>
-                  <Input
-                    id={`firma-${i}`}
-                    name={`firma-${i}`}
-                    required
-                    defaultValue={sugerirFirma(r.nombre)}
-                  />
-                </div>
-              ))}
-            </div>
           </div>
 
           <DialogFooter>
-            <Button type="submit">Registrar nota</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Registrando..." : "Registrar nota"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

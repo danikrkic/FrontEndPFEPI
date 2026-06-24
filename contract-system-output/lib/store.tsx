@@ -2,42 +2,30 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
-  useMemo,
   useState,
 } from "react"
-import {
-  ANTICIPOS,
-  AVANCES,
-  BITACORAS,
-  CONTRACTS,
-  CONTRATISTAS,
-  CONVENIOS,
-  ESTIMACIONES,
-  GARANTIAS,
-  INCUMPLIMIENTOS,
-  MINUTAS,
-  ORDENES_PAGO,
-  RESIDENTES,
-  SUPERVISORES,
-} from "./mock-data"
 import type {
   Anticipo,
   AvanceDiario,
+  AvanceTipo,
   Bitacora,
-  BitacoraNote,
   ConceptoCatalogo,
   Contract,
-  ContractVersion,
   Contratista,
   Convenio,
+  ConvenioAlcance,
+  ConvenioConceptoAfectado,
+  ConvenioTipo,
+  DocBlock,
   Estimacion,
   Garantia,
   GarantiaTipo,
   Incumplimiento,
+  IncumplimientoTipo,
   Minuta,
+  NoteType,
   OrdenPago,
   Persona,
   ProgramaObra,
@@ -45,8 +33,42 @@ import type {
   SolicitudActivacion,
   User,
 } from "./types"
-import { calcularDesgloseEstimacion, aplicarAjusteCantidades, sumarDias, hoy } from "./calculos"
-import { clearTokens, loginRequest, meRequest, type ApiUser } from "./api"
+import {
+  abrirBitacoraRequest,
+  addBitacoraNotaRequest,
+  adaptContractBundle,
+  clearTokens,
+  createAnticipoRequest,
+  createAvanceRequest,
+  createContratistaRequest,
+  createContratoRequest,
+  createConvenioRequest,
+  createEstimacionRequest,
+  createGarantiaRequest,
+  createIncumplimientoRequest,
+  createMinutaRequest,
+  createPersonaRequest,
+  dispersarPagoRequest,
+  fetchContrato,
+  fetchContratistas,
+  fetchContratos,
+  fetchPersonas,
+  liberarGarantiaRequest,
+  loginRequest,
+  meRequest,
+  putCatalogoRequest,
+  putProgramaObraRequest,
+  revisarActivacionRequest,
+  revisarConvenioRequest,
+  revisarEstimacionRequest,
+  solicitarActivacionRequest,
+  toContratista,
+  toOrdenPago,
+  toPersona,
+  uploadDocumentoRequest,
+  type ApiUser,
+  type ContractBundle,
+} from "./api"
 
 function toUser(apiUser: ApiUser): User {
   return {
@@ -62,6 +84,8 @@ function toUser(apiUser: ApiUser): User {
 
 interface AppState {
   user: User | null
+  /** true mientras se hidrata la sesión (meRequest) o se cargan los contratos al iniciar sesión */
+  loading: boolean
   login: (email: string, password: string) => Promise<User | null>
   logout: () => void
 
@@ -69,6 +93,7 @@ interface AppState {
   contratistas: Contratista[]
   residentes: Persona[]
   supervisores: Persona[]
+  superintendentes: Persona[]
   bitacoras: Bitacora[]
   estimaciones: Estimacion[]
   convenios: Convenio[]
@@ -81,508 +106,511 @@ interface AppState {
   anticipos: Anticipo[]
   solicitudesActivacion: SolicitudActivacion[]
 
-  addContract: (c: Omit<Contract, "id" | "version" | "documentos" | "versiones" | "avanceProgramado" | "avanceReal" | "catalogoConceptos">) => void
-  addContratista: (c: Omit<Contratista, "id">) => Contratista
-  addResidente: (p: Omit<Persona, "id">) => Persona
-  addSupervisor: (p: Omit<Persona, "id">) => Persona
-  addDocument: (contratoId: string, doc: Contract["documentos"][number]) => void
-  setCatalogoConceptos: (contratoId: string, conceptos: ConceptoCatalogo[]) => void
-  openBitacora: (contratoId: string, notaApertura: string) => void
-  addNote: (contratoId: string, note: Omit<BitacoraNote, "id" | "numero">) => void
-  addEstimacion: (e: Omit<Estimacion, "id" | "numero" | "status" | "observaciones" | "amortizacionAnticipo" | "retencionGarantia" | "iva" | "importeNeto">) => void
-  reviewEstimacion: (id: string, status: "aceptada" | "rechazada", observaciones: string) => void
-  addConvenio: (c: Omit<Convenio, "id" | "status" | "motivoRechazo">) => void
-  reviewConvenio: (id: string, status: "aprobado" | "rechazado", motivoRechazo: string) => void
-  attendPago: (id: string) => void
-  addAvance: (a: Omit<AvanceDiario, "id">) => void
-  addIncumplimiento: (i: Omit<Incumplimiento, "id">) => void
-  addMinuta: (m: Omit<Minuta, "id">) => void
-  setProgramaObra: (contratoId: string, conceptos: ProgramaObra["conceptos"]) => void
-  addGarantia: (g: Omit<Garantia, "id">) => void
-  addAnticipo: (a: Omit<Anticipo, "id">) => void
+  addContract: (
+    c: Omit<
+      Contract,
+      "id" | "version" | "documentos" | "versiones" | "avanceProgramado" | "avanceReal" | "catalogoConceptos"
+    >,
+  ) => Promise<void>
+  addContratista: (c: Omit<Contratista, "id">) => Promise<Contratista>
+  addResidente: (p: Omit<Persona, "id">) => Promise<Persona>
+  addSupervisor: (p: Omit<Persona, "id">) => Promise<Persona>
+  addSuperintendente: (p: Omit<Persona, "id">) => Promise<Persona>
+  addDocument: (contratoId: string, bloque: DocBlock, archivo: File) => Promise<void>
+  setCatalogoConceptos: (contratoId: string, conceptos: ConceptoCatalogo[]) => Promise<void>
+  openBitacora: (contratoId: string, notaApertura: string) => Promise<void>
+  addNote: (
+    contratoId: string,
+    note: { tipo: NoteType; contenido: string },
+    fotos?: File[],
+  ) => Promise<void>
+  addEstimacion: (e: {
+    contratoId: string
+    periodoInicio: string
+    periodoFin: string
+    caratula: string
+    numerosGeneradores: string
+    registroFotografico: number
+    notasSoporte: number
+    importeBruto: number
+  }) => Promise<void>
+  reviewEstimacion: (id: string, status: "aceptada" | "rechazada", observaciones: string) => Promise<void>
+  addConvenio: (
+    c: {
+      contratoId: string
+      tipo: ConvenioTipo
+      justificacion: string
+      montoAdicional: number
+      diasAdicionales: number
+      alcance: ConvenioAlcance
+      conceptosAfectados?: ConvenioConceptoAfectado[]
+      conceptosNuevos?: ConceptoCatalogo[]
+    },
+    archivos?: File[],
+  ) => Promise<void>
+  reviewConvenio: (id: string, status: "aprobado" | "rechazado", motivoRechazo: string) => Promise<void>
+  attendPago: (id: string) => Promise<void>
+  addAvance: (a: { contratoId: string; tipo: AvanceTipo; descripcion: string; evidencia?: string }) => Promise<void>
+  addIncumplimiento: (i: {
+    contratoId: string
+    tipo: IncumplimientoTipo
+    descripcion: string
+    evidenciaRef?: string
+  }) => Promise<void>
+  addMinuta: (m: {
+    contratoId: string
+    titulo: string
+    participantes?: string
+    acuerdos?: string
+    observaciones?: string
+    compromisos?: string
+  }) => Promise<void>
+  setProgramaObra: (contratoId: string, conceptos: ProgramaObra["conceptos"]) => Promise<void>
+  addGarantia: (
+    g: {
+      contratoId: string
+      tipo: GarantiaTipo
+      institucionAfianzadora: string
+      numeroPoliza: string
+      monto: number
+      fechaEmision: string
+      fechaVigencia: string
+    },
+    archivo?: File,
+  ) => Promise<void>
+  liberarGarantia: (id: string) => Promise<void>
+  addAnticipo: (a: {
+    contratoId: string
+    montoOtorgado: number
+    porcentajeContrato: number
+    porcentajeAmortizacion: number
+    fechaEntrega: string
+    garantiaId?: string
+  }) => Promise<void>
   /** Dependencia solicita activar un contrato en estado registrado */
-  requestActivation: (contratoId: string, solicitadoPor: string) => void
+  requestActivation: (contratoId: string) => Promise<void>
   /** Residente aprueba o rechaza la solicitud de activación */
-  reviewActivation: (contratoId: string, aprobado: boolean, observaciones: string, revisadoPor: string) => void
+  reviewActivation: (contratoId: string, aprobado: boolean, observaciones: string) => Promise<void>
   /** Returns the set of GarantiaTipo values already registered for a contract (cannot add again) */
   garantiasTiposUsados: (contratoId: string) => Set<GarantiaTipo>
 }
 
 const AppContext = createContext<AppState | null>(null)
 
-function uid(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`
-}
-
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [contracts, setContracts] = useState<Contract[]>(CONTRACTS)
-  const [contratistas, setContratistas] = useState<Contratista[]>(CONTRATISTAS)
-  const [residentes, setResidentes] = useState<Persona[]>(RESIDENTES)
-  const [supervisores, setSupervisores] = useState<Persona[]>(SUPERVISORES)
-  const [bitacoras, setBitacoras] = useState<Bitacora[]>(BITACORAS)
-  const [estimaciones, setEstimaciones] = useState<Estimacion[]>(ESTIMACIONES)
-  const [convenios, setConvenios] = useState<Convenio[]>(CONVENIOS)
-  const [ordenesPago, setOrdenesPago] = useState<OrdenPago[]>(ORDENES_PAGO)
-  const [avances, setAvances] = useState<AvanceDiario[]>(AVANCES)
-  const [incumplimientos, setIncumplimientos] = useState<Incumplimiento[]>(INCUMPLIMIENTOS)
-  const [minutas, setMinutas] = useState<Minuta[]>(MINUTAS)
+  const [loading, setLoading] = useState(true)
+  const [contracts, setContracts] = useState<Contract[]>([])
+  const [contratistas, setContratistas] = useState<Contratista[]>([])
+  const [residentes, setResidentes] = useState<Persona[]>([])
+  const [supervisores, setSupervisores] = useState<Persona[]>([])
+  const [superintendentes, setSuperintendentes] = useState<Persona[]>([])
+  const [bitacoras, setBitacoras] = useState<Bitacora[]>([])
+  const [estimaciones, setEstimaciones] = useState<Estimacion[]>([])
+  const [convenios, setConvenios] = useState<Convenio[]>([])
+  const [ordenesPago, setOrdenesPago] = useState<OrdenPago[]>([])
+  const [avances, setAvances] = useState<AvanceDiario[]>([])
+  const [incumplimientos, setIncumplimientos] = useState<Incumplimiento[]>([])
+  const [minutas, setMinutas] = useState<Minuta[]>([])
   const [programasObra, setProgramasObra] = useState<ProgramaObra[]>([])
-  const [garantias, setGarantias] = useState<Garantia[]>(GARANTIAS)
-  const [anticipos, setAnticipos] = useState<Anticipo[]>(ANTICIPOS)
+  const [garantias, setGarantias] = useState<Garantia[]>([])
+  const [anticipos, setAnticipos] = useState<Anticipo[]>([])
   const [solicitudesActivacion, setSolicitudesActivacion] = useState<SolicitudActivacion[]>([])
 
-  useEffect(() => {
-    meRequest().then((apiUser) => {
-      if (apiUser) setUser(toUser(apiUser))
+  // El pool de Personas es único en el backend (una misma persona puede ser
+  // residente/supervisor/superintendente en distintos contratos); se expone
+  // triplicado para no romper las páginas que ya esperan tres listas.
+  async function loadPersonasYContratistas() {
+    const [apiContratistas, apiPersonas] = await Promise.all([fetchContratistas(), fetchPersonas()])
+    setContratistas(apiContratistas.map(toContratista))
+    const personas = apiPersonas.map(toPersona)
+    setResidentes(personas)
+    setSupervisores(personas)
+    setSuperintendentes(personas)
+  }
+
+  function applyBundle(bundle: ContractBundle) {
+    const cId = bundle.contract.id
+    setContracts((prev) => {
+      const exists = prev.some((c) => c.id === cId)
+      return exists ? prev.map((c) => (c.id === cId ? bundle.contract : c)) : [bundle.contract, ...prev]
     })
+    setBitacoras((prev) => [...prev.filter((b) => b.contratoId !== cId), bundle.bitacora])
+    setEstimaciones((prev) => [...prev.filter((e) => e.contratoId !== cId), ...bundle.estimaciones])
+    setOrdenesPago((prev) => [...prev.filter((o) => o.contratoId !== cId), ...bundle.ordenesPago])
+    setConvenios((prev) => [...prev.filter((c) => c.contratoId !== cId), ...bundle.convenios])
+    setGarantias((prev) => [...prev.filter((g) => g.contratoId !== cId), ...bundle.garantias])
+    setAnticipos((prev) => {
+      const rest = prev.filter((a) => a.contratoId !== cId)
+      return bundle.anticipo ? [...rest, bundle.anticipo] : rest
+    })
+    setAvances((prev) => [...prev.filter((a) => a.contratoId !== cId), ...bundle.avances])
+    setIncumplimientos((prev) => [...prev.filter((i) => i.contratoId !== cId), ...bundle.incumplimientos])
+    setMinutas((prev) => [...prev.filter((m) => m.contratoId !== cId), ...bundle.minutas])
+    setProgramasObra((prev) => [...prev.filter((p) => p.contratoId !== cId), bundle.programaObra])
+    setSolicitudesActivacion((prev) => {
+      const rest = prev.filter((s) => s.contratoId !== cId)
+      return bundle.solicitudActivacion ? [...rest, bundle.solicitudActivacion] : rest
+    })
+  }
+
+  async function refreshContrato(contratoId: string) {
+    const api = await fetchContrato(contratoId)
+    applyBundle(adaptContractBundle(api))
+  }
+
+  async function loadAll() {
+    const apiContratos = await fetchContratos()
+    const bundles = apiContratos.map(adaptContractBundle)
+    setContracts(bundles.map((b) => b.contract))
+    setBitacoras(bundles.map((b) => b.bitacora))
+    setEstimaciones(bundles.flatMap((b) => b.estimaciones))
+    setOrdenesPago(bundles.flatMap((b) => b.ordenesPago))
+    setConvenios(bundles.flatMap((b) => b.convenios))
+    setGarantias(bundles.flatMap((b) => b.garantias))
+    setAnticipos(bundles.flatMap((b) => (b.anticipo ? [b.anticipo] : [])))
+    setAvances(bundles.flatMap((b) => b.avances))
+    setIncumplimientos(bundles.flatMap((b) => b.incumplimientos))
+    setMinutas(bundles.flatMap((b) => b.minutas))
+    setProgramasObra(bundles.map((b) => b.programaObra))
+    setSolicitudesActivacion(bundles.flatMap((b) => (b.solicitudActivacion ? [b.solicitudActivacion] : [])))
+    await loadPersonasYContratistas()
+  }
+
+  useEffect(() => {
+    meRequest()
+      .then(async (apiUser) => {
+        if (apiUser) {
+          setUser(toUser(apiUser))
+          await loadAll()
+        }
+      })
+      .finally(() => setLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const login = useCallback(async (email: string, password: string) => {
+  async function login(email: string, password: string) {
     const apiUser = await loginRequest(email, password)
     if (!apiUser) return null
     const u = toUser(apiUser)
     setUser(u)
+    setLoading(true)
+    try {
+      await loadAll()
+    } finally {
+      setLoading(false)
+    }
     return u
-  }, [])
+  }
 
-  const logout = useCallback(() => {
+  function logout() {
     setUser(null)
     clearTokens()
-  }, [])
+    setContracts([])
+    setContratistas([])
+    setResidentes([])
+    setSupervisores([])
+    setSuperintendentes([])
+    setBitacoras([])
+    setEstimaciones([])
+    setConvenios([])
+    setOrdenesPago([])
+    setAvances([])
+    setIncumplimientos([])
+    setMinutas([])
+    setProgramasObra([])
+    setGarantias([])
+    setAnticipos([])
+    setSolicitudesActivacion([])
+  }
 
-  const addContract = useCallback<AppState["addContract"]>((c) => {
-    setContracts((prev) => [
-      {
-        ...c,
-        id: uid("c"),
-        version: 1,
-        avanceProgramado: 0,
-        avanceReal: 0,
-        documentos: [],
-        catalogoConceptos: [],
-        versiones: [
-          {
-            version: 1,
-            fecha: c.fechaInicio,
-            monto: c.monto,
-            fechaTermino: c.fechaTermino,
-            motivo: "Contrato original",
-          },
-        ],
-      },
-      ...prev,
-    ])
-  }, [])
+  const addContract: AppState["addContract"] = async (c) => {
+    const api = await createContratoRequest({
+      no_contrato: c.noContrato,
+      objeto: c.objeto,
+      descripcion: c.descripcion,
+      monto: c.monto,
+      plazo_dias: c.plazoDias,
+      fecha_inicio: c.fechaInicio,
+      fecha_termino: c.fechaTermino,
+      ubicacion: c.ubicacion,
+      contratista_id: c.contratista.id,
+      residente_id: c.residente.id,
+      supervisor_id: c.supervisor.id,
+      superintendente_id: c.superintendente.id,
+    })
+    applyBundle(adaptContractBundle(api))
+  }
 
-  const addContratista = useCallback<AppState["addContratista"]>((c) => {
-    const nuevo = { ...c, id: uid("ct") }
+  const addContratista: AppState["addContratista"] = async (c) => {
+    const api = await createContratistaRequest(c)
+    const nuevo = toContratista(api)
     setContratistas((prev) => [...prev, nuevo])
     return nuevo
-  }, [])
+  }
 
-  const addResidente = useCallback<AppState["addResidente"]>((p) => {
-    const nuevo = { ...p, id: uid("r") }
-    setResidentes((prev) => [...prev, nuevo])
-    return nuevo
-  }, [])
+  async function addPersona(p: Omit<Persona, "id">) {
+    const api = await createPersonaRequest(p)
+    const nueva = toPersona(api)
+    setResidentes((prev) => [...prev, nueva])
+    setSupervisores((prev) => [...prev, nueva])
+    setSuperintendentes((prev) => [...prev, nueva])
+    return nueva
+  }
 
-  const addSupervisor = useCallback<AppState["addSupervisor"]>((p) => {
-    const nuevo = { ...p, id: uid("s") }
-    setSupervisores((prev) => [...prev, nuevo])
-    return nuevo
-  }, [])
+  const addResidente: AppState["addResidente"] = (p) => addPersona(p)
+  const addSupervisor: AppState["addSupervisor"] = (p) => addPersona(p)
+  const addSuperintendente: AppState["addSuperintendente"] = (p) => addPersona(p)
 
-  const addDocument = useCallback<AppState["addDocument"]>((contratoId, doc) => {
-    setContracts((prev) =>
-      prev.map((c) =>
-        c.id === contratoId ? { ...c, documentos: [...c.documentos, doc] } : c,
-      ),
+  const addDocument: AppState["addDocument"] = async (contratoId, bloque, archivo) => {
+    const formData = new FormData()
+    formData.append("bloque", bloque)
+    formData.append("nombre", archivo.name)
+    formData.append("archivo", archivo)
+    await uploadDocumentoRequest(contratoId, formData)
+    await refreshContrato(contratoId)
+  }
+
+  const setCatalogoConceptos: AppState["setCatalogoConceptos"] = async (contratoId, conceptos) => {
+    await putCatalogoRequest(
+      contratoId,
+      conceptos.map((c) => ({
+        clave: c.clave,
+        descripcion: c.descripcion,
+        unidad: c.unidad,
+        cantidad: c.cantidad,
+        precio_unitario: c.precioUnitario,
+        capitulo: c.capitulo,
+      })),
     )
-  }, [])
+    await refreshContrato(contratoId)
+  }
 
-  const setCatalogoConceptos = useCallback<AppState["setCatalogoConceptos"]>(
-    (contratoId, conceptos) => {
-      setContracts((prev) =>
-        prev.map((c) =>
-          c.id === contratoId ? { ...c, catalogoConceptos: conceptos } : c,
+  const openBitacora: AppState["openBitacora"] = async (contratoId, notaApertura) => {
+    await abrirBitacoraRequest(contratoId, notaApertura)
+    await refreshContrato(contratoId)
+  }
+
+  const addNote: AppState["addNote"] = async (contratoId, note, fotos) => {
+    const formData = new FormData()
+    formData.append("tipo", note.tipo)
+    formData.append("contenido", note.contenido)
+    for (const foto of fotos ?? []) {
+      formData.append("fotos", foto)
+    }
+    await addBitacoraNotaRequest(contratoId, formData)
+    await refreshContrato(contratoId)
+  }
+
+  const addEstimacion: AppState["addEstimacion"] = async (e) => {
+    await createEstimacionRequest({
+      contrato_id: e.contratoId,
+      periodo_inicio: e.periodoInicio,
+      periodo_fin: e.periodoFin,
+      caratula: e.caratula,
+      numeros_generadores: e.numerosGeneradores,
+      registro_fotografico: e.registroFotografico,
+      notas_soporte: e.notasSoporte,
+      importe_bruto: e.importeBruto,
+    })
+    await refreshContrato(e.contratoId)
+  }
+
+  const reviewEstimacion: AppState["reviewEstimacion"] = async (id, status, observaciones) => {
+    const estimacion = estimaciones.find((e) => e.id === id)
+    await revisarEstimacionRequest(id, status, observaciones)
+    if (estimacion) await refreshContrato(estimacion.contratoId)
+  }
+
+  const addConvenio: AppState["addConvenio"] = async (c, archivos) => {
+    const formData = new FormData()
+    formData.append("contrato_id", c.contratoId)
+    formData.append("tipo", c.tipo)
+    formData.append("justificacion", c.justificacion)
+    formData.append("monto_adicional", String(c.montoAdicional))
+    formData.append("dias_adicionales", String(c.diasAdicionales))
+    formData.append("alcance", c.alcance)
+    if (c.conceptosAfectados) {
+      formData.append(
+        "conceptos_afectados",
+        JSON.stringify(
+          c.conceptosAfectados.map((a) => ({
+            concepto_id: a.conceptoId,
+            cantidad_anterior: a.cantidadAnterior,
+            cantidad_nueva: a.cantidadNueva,
+          })),
         ),
       )
-    },
-    [],
-  )
-
-  const openBitacora = useCallback<AppState["openBitacora"]>((contratoId, notaApertura) => {
-    setBitacoras((prev) => {
-      const existing = prev.find((b) => b.contratoId === contratoId)
-      const fecha = new Date().toISOString().slice(0, 10)
-      if (existing) {
-        return prev.map((b) =>
-          b.contratoId === contratoId
-            ? { ...b, abierta: true, fechaApertura: fecha, notaApertura }
-            : b,
-        )
-      }
-      return [
-        ...prev,
-        { contratoId, abierta: true, fechaApertura: fecha, notaApertura, notas: [] },
-      ]
-    })
-  }, [])
-
-  const addNote = useCallback<AppState["addNote"]>((contratoId, note) => {
-    setBitacoras((prev) =>
-      prev.map((b) => {
-        if (b.contratoId !== contratoId) return b
-        const numero = b.notas.length + 1
-        return { ...b, notas: [...b.notas, { ...note, id: uid("bn"), numero }] }
-      }),
-    )
-  }, [])
-
-  const addEstimacion = useCallback<AppState["addEstimacion"]>((e) => {
-    setEstimaciones((prev) => {
-      const numero = prev.filter((x) => x.contratoId === e.contratoId).length + 1
-      // Calcular desglose con el anticipo del contrato (si existe)
-      const anticipo = anticipos.find((a) => a.contratoId === e.contratoId) ?? null
-      const desglose = calcularDesgloseEstimacion(e.importeBruto, anticipo)
-      return [
-        ...prev,
-        {
-          ...e,
-          id: uid("e"),
-          numero,
-          status: "en_revision",
-          observaciones: "",
-          ...desglose,
-        },
-      ]
-    })
-  }, [anticipos])
-
-  // ── Cambio 2: reviewEstimacion actualiza saldo del anticipo al aceptar ──────
-  const reviewEstimacion = useCallback<AppState["reviewEstimacion"]>(
-    (id, status, observaciones) => {
-      setEstimaciones((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, status, observaciones } : e)),
-      )
-      if (status === "aceptada") {
-        setEstimaciones((cur) => {
-          const est = cur.find((e) => e.id === id)
-          if (est) {
-            // Actualizar saldo pendiente del anticipo
-            setAnticipos((ants) =>
-              ants.map((a) =>
-                a.contratoId === est.contratoId
-                  ? {
-                      ...a,
-                      saldoPendiente: Math.max(0, a.saldoPendiente - est.amortizacionAnticipo),
-                    }
-                  : a,
-              ),
-            )
-            setOrdenesPago((ops) => {
-              if (ops.some((o) => o.estimacionId === id)) return ops
-              const contrato = contracts.find((c) => c.id === est.contratoId)
-              return [
-                {
-                  id: uid("op"),
-                  contratoId: est.contratoId,
-                  noContrato: contrato?.noContrato ?? "",
-                  estimacionId: est.id,
-                  estimacionNumero: est.numero,
-                  monto: est.importeNeto,
-                  fechaEmision: new Date().toISOString().slice(0, 10),
-                  status: "pendiente" as const,
-                  fechaAtencion: null,
-                },
-                ...ops,
-              ]
-            })
-          }
-          return cur
-        })
-      }
-    },
-    [contracts],
-  )
-
-  const addConvenio = useCallback<AppState["addConvenio"]>((c) => {
-    setConvenios((prev) => [
-      { ...c, id: uid("cv"), status: "pendiente", motivoRechazo: "" },
-      ...prev,
-    ])
-  }, [])
-
-  // ── Cambio 5: aprobarConvenio con propagación al catálogo ────────────────────
-  const reviewConvenio = useCallback<AppState["reviewConvenio"]>(
-    (id, status, motivoRechazo) => {
-      setConvenios((prev) => {
-        const conv = prev.find((c) => c.id === id)
-        if (conv && status === "aprobado") {
-          setContracts((cs) =>
-            cs.map((c) => {
-              if (c.id !== conv.contratoId) return c
-
-              // Snapshot versión anterior
-              const versionAnterior: ContractVersion = {
-                version: c.version,
-                fecha: hoy(),
-                monto: c.monto,
-                fechaTermino: c.fechaTermino,
-                motivo: `Previo a convenio ${conv.id}`,
-                catalogoConceptos: [...c.catalogoConceptos],
-              }
-
-              // Propagar catálogo
-              let catalogoActualizado = c.catalogoConceptos
-              if (conv.alcance === "ajuste_cantidades" && conv.conceptosAfectados) {
-                catalogoActualizado = aplicarAjusteCantidades(
-                  catalogoActualizado,
-                  conv.conceptosAfectados,
-                )
-              }
-              if (conv.alcance === "conceptos_nuevos" && conv.conceptosNuevos) {
-                catalogoActualizado = [...catalogoActualizado, ...conv.conceptosNuevos]
-              }
-
-              const nuevoMonto = c.monto + conv.montoAdicional
-              const nuevaFechaTermino =
-                conv.tipo !== "monto" && conv.diasAdicionales
-                  ? sumarDias(c.fechaTermino, conv.diasAdicionales)
-                  : c.fechaTermino
-
-              return {
-                ...c,
-                monto: nuevoMonto,
-                fechaTermino: nuevaFechaTermino,
-                plazoDias: c.plazoDias + conv.diasAdicionales,
-                version: c.version + 1,
-                catalogoConceptos: catalogoActualizado,
-                versiones: [
-                  ...c.versiones,
-                  versionAnterior,
-                ],
-              }
-            }),
-          )
-        }
-        return prev.map((c) =>
-          c.id === id ? { ...c, status, motivoRechazo } : c,
-        )
-      })
-    },
-    [],
-  )
-
-  const attendPago = useCallback<AppState["attendPago"]>((id) => {
-    setOrdenesPago((prev) =>
-      prev.map((o) =>
-        o.id === id
-          ? { ...o, status: "atendida", fechaAtencion: new Date().toISOString().slice(0, 10) }
-          : o,
-      ),
-    )
-  }, [])
-
-  const addAvance = useCallback<AppState["addAvance"]>((a) => {
-    setAvances((prev) => [{ ...a, id: uid("a") }, ...prev])
-  }, [])
-
-  const addIncumplimiento = useCallback<AppState["addIncumplimiento"]>((i) => {
-    setIncumplimientos((prev) => [{ ...i, id: uid("i") }, ...prev])
-  }, [])
-
-  const addMinuta = useCallback<AppState["addMinuta"]>((m) => {
-    setMinutas((prev) => [{ ...m, id: uid("m") }, ...prev])
-  }, [])
-
-  const setProgramaObra = useCallback(
-    (contratoId: string, conceptos: ProgramaObra["conceptos"]) => {
-      setProgramasObra((prev) => {
-        const exists = prev.find((p) => p.contratoId === contratoId)
-        const updated: ProgramaObra = {
-          contratoId,
-          conceptos,
-          updatedAt: new Date().toISOString(),
-        }
-        return exists
-          ? prev.map((p) => (p.contratoId === contratoId ? updated : p))
-          : [...prev, updated]
-      })
-    },
-    [],
-  )
-
-  const addGarantia = useCallback<AppState["addGarantia"]>((g) => {
-    setGarantias((prev) => [...prev, { ...g, id: uid("g") }])
-  }, [])
-
-  const addAnticipo = useCallback<AppState["addAnticipo"]>((a) => {
-    setAnticipos((prev) => [...prev, { ...a, id: uid("ant") }])
-  }, [])
-
-  const requestActivation = useCallback<AppState["requestActivation"]>(
-    (contratoId, solicitadoPor) => {
-      setSolicitudesActivacion((prev) => {
-        // Reemplazar solicitud previa rechazada si existe
-        const sinAnterior = prev.filter((s) => s.contratoId !== contratoId)
-        return [
-          ...sinAnterior,
-          {
-            contratoId,
-            status: "pendiente",
-            solicitadoPor,
-            fechaSolicitud: hoy(),
-            revisadoPor: null,
-            fechaRevision: null,
-            observaciones: "",
-          },
-        ]
-      })
-    },
-    [],
-  )
-
-  const reviewActivation = useCallback<AppState["reviewActivation"]>(
-    (contratoId, aprobado, observaciones, revisadoPor) => {
-      const fechaRevision = hoy()
-      setSolicitudesActivacion((prev) =>
-        prev.map((s) =>
-          s.contratoId === contratoId
-            ? {
-                ...s,
-                status: aprobado ? "aprobada" : "rechazada",
-                revisadoPor,
-                fechaRevision,
-                observaciones,
-              }
-            : s,
+    }
+    if (c.conceptosNuevos) {
+      formData.append(
+        "conceptos_nuevos",
+        JSON.stringify(
+          c.conceptosNuevos.map((n) => ({
+            clave: n.clave,
+            descripcion: n.descripcion,
+            unidad: n.unidad,
+            cantidad: n.cantidad,
+            precio_unitario: n.precioUnitario,
+            capitulo: n.capitulo ?? "",
+          })),
         ),
       )
-      if (aprobado) {
-        // Activar el contrato y abrir la bitácora automáticamente
-        setContracts((prev) =>
-          prev.map((c) =>
-            c.id === contratoId
-              ? { ...c, status: "activo" as const, fechaActivacion: fechaRevision }
-              : c,
-          ),
-        )
-        setBitacoras((prev) => {
-          const existe = prev.find((b) => b.contratoId === contratoId)
-          if (existe) return prev
-          return [
-            ...prev,
-            {
-              contratoId,
-              abierta: true,
-              fechaApertura: fechaRevision,
-              notaApertura: `Bitácora abierta automáticamente al activar el contrato el ${fechaRevision}. Revisado y aprobado por ${revisadoPor}.`,
-              notas: [],
-            },
-          ]
-        })
-      }
-    },
-    [],
-  )
+    }
+    for (const archivo of archivos ?? []) {
+      formData.append("documentos", archivo)
+    }
+    await createConvenioRequest(formData)
+    await refreshContrato(c.contratoId)
+  }
 
-  const garantiasTiposUsados = useCallback(
-    (contratoId: string): Set<GarantiaTipo> => {
-      return new Set(
-        garantias.filter((g) => g.contratoId === contratoId).map((g) => g.tipo),
-      )
-    },
-    [garantias],
-  )
+  const reviewConvenio: AppState["reviewConvenio"] = async (id, status, motivoRechazo) => {
+    const convenio = convenios.find((c) => c.id === id)
+    await revisarConvenioRequest(id, status, motivoRechazo)
+    if (convenio) await refreshContrato(convenio.contratoId)
+  }
 
-  const value = useMemo<AppState>(
-    () => ({
-      user,
-      login,
-      logout,
-      contracts,
-      contratistas,
-      residentes,
-      supervisores,
-      bitacoras,
-      estimaciones,
-      convenios,
-      ordenesPago,
-      avances,
-      incumplimientos,
-      minutas,
-      programasObra,
-      garantias,
-      anticipos,
-      solicitudesActivacion,
-      addContract,
-      addContratista,
-      addResidente,
-      addSupervisor,
-      addDocument,
-      setCatalogoConceptos,
-      openBitacora,
-      addNote,
-      addEstimacion,
-      reviewEstimacion,
-      addConvenio,
-      reviewConvenio,
-      attendPago,
-      addAvance,
-      addIncumplimiento,
-      addMinuta,
-      setProgramaObra,
-      addGarantia,
-      addAnticipo,
-      requestActivation,
-      reviewActivation,
-      garantiasTiposUsados,
-    }),
-    [
-      user,
-      login,
-      logout,
-      contracts,
-      contratistas,
-      residentes,
-      supervisores,
-      bitacoras,
-      estimaciones,
-      convenios,
-      ordenesPago,
-      avances,
-      incumplimientos,
-      minutas,
-      programasObra,
-      garantias,
-      anticipos,
-      solicitudesActivacion,
-      addContract,
-      addContratista,
-      addResidente,
-      addSupervisor,
-      addDocument,
-      setCatalogoConceptos,
-      openBitacora,
-      addNote,
-      addEstimacion,
-      reviewEstimacion,
-      addConvenio,
-      reviewConvenio,
-      attendPago,
-      addAvance,
-      addIncumplimiento,
-      addMinuta,
-      setProgramaObra,
-      addGarantia,
-      addAnticipo,
-      requestActivation,
-      reviewActivation,
-      garantiasTiposUsados,
-    ],
-  )
+  const attendPago: AppState["attendPago"] = async (id) => {
+    const api = await dispersarPagoRequest(id)
+    const mapped = toOrdenPago(api)
+    setOrdenesPago((prev) => prev.map((o) => (o.id === mapped.id ? mapped : o)))
+  }
+
+  const addAvance: AppState["addAvance"] = async (a) => {
+    await createAvanceRequest({
+      contrato_id: a.contratoId,
+      tipo: a.tipo,
+      descripcion: a.descripcion,
+      evidencia: a.evidencia,
+    })
+    await refreshContrato(a.contratoId)
+  }
+
+  const addIncumplimiento: AppState["addIncumplimiento"] = async (i) => {
+    await createIncumplimientoRequest({
+      contrato_id: i.contratoId,
+      tipo: i.tipo,
+      descripcion: i.descripcion,
+      evidencia_ref: i.evidenciaRef,
+    })
+    await refreshContrato(i.contratoId)
+  }
+
+  const addMinuta: AppState["addMinuta"] = async (m) => {
+    await createMinutaRequest({
+      contrato_id: m.contratoId,
+      titulo: m.titulo,
+      participantes: m.participantes,
+      acuerdos: m.acuerdos,
+      observaciones: m.observaciones,
+      compromisos: m.compromisos,
+    })
+    await refreshContrato(m.contratoId)
+  }
+
+  const setProgramaObra: AppState["setProgramaObra"] = async (contratoId, conceptos) => {
+    await putProgramaObraRequest(
+      contratoId,
+      conceptos.map((c) => ({
+        concepto_id: Number(c.conceptoId),
+        semanas: c.semanas.map((s) => ({ semana: s.semana, cantidad: s.cantidad })),
+      })),
+    )
+    await refreshContrato(contratoId)
+  }
+
+  const addGarantia: AppState["addGarantia"] = async (g, archivo) => {
+    const formData = new FormData()
+    formData.append("contrato_id", g.contratoId)
+    formData.append("tipo", g.tipo)
+    formData.append("institucion_afianzadora", g.institucionAfianzadora)
+    formData.append("numero_poliza", g.numeroPoliza)
+    formData.append("monto", String(g.monto))
+    formData.append("fecha_emision", g.fechaEmision)
+    formData.append("fecha_vigencia", g.fechaVigencia)
+    if (archivo) formData.append("archivo", archivo)
+    await createGarantiaRequest(formData)
+    await refreshContrato(g.contratoId)
+  }
+
+  const liberarGarantia: AppState["liberarGarantia"] = async (id) => {
+    const garantia = garantias.find((g) => g.id === id)
+    await liberarGarantiaRequest(id)
+    if (garantia) await refreshContrato(garantia.contratoId)
+  }
+
+  const addAnticipo: AppState["addAnticipo"] = async (a) => {
+    await createAnticipoRequest({
+      contrato_id: a.contratoId,
+      monto_otorgado: a.montoOtorgado,
+      porcentaje_contrato: a.porcentajeContrato,
+      porcentaje_amortizacion: a.porcentajeAmortizacion,
+      fecha_entrega: a.fechaEntrega,
+      garantia: a.garantiaId || null,
+    })
+    await refreshContrato(a.contratoId)
+  }
+
+  const requestActivation: AppState["requestActivation"] = async (contratoId) => {
+    await solicitarActivacionRequest(contratoId)
+    await refreshContrato(contratoId)
+  }
+
+  const reviewActivation: AppState["reviewActivation"] = async (contratoId, aprobado, observaciones) => {
+    await revisarActivacionRequest(contratoId, aprobado, observaciones)
+    await refreshContrato(contratoId)
+  }
+
+  function garantiasTiposUsados(contratoId: string): Set<GarantiaTipo> {
+    return new Set(garantias.filter((g) => g.contratoId === contratoId).map((g) => g.tipo))
+  }
+
+  const value: AppState = {
+    user,
+    loading,
+    login,
+    logout,
+    contracts,
+    contratistas,
+    residentes,
+    supervisores,
+    superintendentes,
+    bitacoras,
+    estimaciones,
+    convenios,
+    ordenesPago,
+    avances,
+    incumplimientos,
+    minutas,
+    programasObra,
+    garantias,
+    anticipos,
+    solicitudesActivacion,
+    addContract,
+    addContratista,
+    addResidente,
+    addSupervisor,
+    addSuperintendente,
+    addDocument,
+    setCatalogoConceptos,
+    openBitacora,
+    addNote,
+    addEstimacion,
+    reviewEstimacion,
+    addConvenio,
+    reviewConvenio,
+    attendPago,
+    addAvance,
+    addIncumplimiento,
+    addMinuta,
+    setProgramaObra,
+    addGarantia,
+    liberarGarantia,
+    addAnticipo,
+    requestActivation,
+    reviewActivation,
+    garantiasTiposUsados,
+  }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

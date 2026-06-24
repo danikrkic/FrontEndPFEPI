@@ -90,7 +90,7 @@ export function DocumentosPanel({ contract }: { contract: Contract }) {
                       variant="ghost"
                       className="h-8 w-8 shrink-0"
                       aria-label={`Descargar ${d.nombre}`}
-                      onClick={() => toast.success(`Descargando ${d.nombre}`)}
+                      render={<a href={d.archivo} target="_blank" rel="noopener noreferrer" />}
                     >
                       <Download className="h-4 w-4" />
                     </Button>
@@ -113,9 +113,30 @@ export function DocumentosPanel({ contract }: { contract: Contract }) {
 }
 
 function UploadDialog({ contract }: { contract: Contract }) {
-  const { addDocument, user } = useApp()
+  const { addDocument } = useApp()
   const [open, setOpen] = useState(false)
   const [bloque, setBloque] = useState<DocBlock>("contrato")
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const fd = new FormData(e.currentTarget)
+    const archivo = fd.get("archivo")
+    if (!(archivo instanceof File) || archivo.size === 0) {
+      toast.error("Selecciona un archivo")
+      return
+    }
+    setSubmitting(true)
+    try {
+      await addDocument(contract.id, bloque, archivo)
+      toast.success("Documento cargado")
+      setOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo cargar el documento")
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -129,26 +150,7 @@ function UploadDialog({ contract }: { contract: Contract }) {
         <DialogHeader>
           <DialogTitle>Cargar documento contractual</DialogTitle>
         </DialogHeader>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            const fd = new FormData(e.currentTarget)
-            const nombre = String(fd.get("nombre"))
-            const ext = nombre.split(".").pop()?.toUpperCase() ?? "PDF"
-            addDocument(contract.id, {
-              id: `d-${Math.random().toString(36).slice(2, 8)}`,
-              bloque,
-              nombre,
-              formato: ext,
-              tamano: String(fd.get("tamano") || "1.0 MB"),
-              fecha: new Date().toISOString().slice(0, 10),
-              subidoPor: user?.name ?? "",
-            })
-            toast.success("Documento cargado")
-            setOpen(false)
-          }}
-          className="grid gap-3"
-        >
+        <form onSubmit={handleSubmit} className="grid gap-3">
           <div className="flex flex-col gap-2">
             <Label>Bloque de información</Label>
             <Select value={bloque} onValueChange={(v) => setBloque(v as DocBlock)}>
@@ -172,15 +174,13 @@ function UploadDialog({ contract }: { contract: Contract }) {
             </p>
           ) : null}
           <div className="flex flex-col gap-2">
-            <Label htmlFor="nombre">Nombre del archivo</Label>
-            <Input id="nombre" name="nombre" placeholder="documento.pdf" required />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="tamano">Tamaño</Label>
-            <Input id="tamano" name="tamano" placeholder="1.2 MB" />
+            <Label htmlFor="archivo">Archivo</Label>
+            <Input id="archivo" name="archivo" type="file" required />
           </div>
           <DialogFooter>
-            <Button type="submit">Cargar</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Cargando..." : "Cargar"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

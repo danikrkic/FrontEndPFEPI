@@ -197,7 +197,7 @@ function ConvenioCard({
                   <DialogTitle>Revisión de convenio modificatorio</DialogTitle>
                 </DialogHeader>
                 <form
-                  onSubmit={(e) => {
+                  onSubmit={async (e) => {
                     e.preventDefault()
                     const decision = (e.nativeEvent as SubmitEvent)
                       .submitter as HTMLButtonElement
@@ -207,13 +207,17 @@ function ConvenioCard({
                       toast.error("Debes indicar el motivo de rechazo")
                       return
                     }
-                    reviewConvenio(cv.id, status, motivo)
-                    toast.success(
-                      status === "aprobado"
-                        ? "Convenio aprobado. Se generó una nueva versión del contrato."
-                        : "Convenio rechazado.",
-                    )
-                    setOpen(false)
+                    try {
+                      await reviewConvenio(cv.id, status, motivo)
+                      toast.success(
+                        status === "aprobado"
+                          ? "Convenio aprobado. Se generó una nueva versión del contrato."
+                          : "Convenio rechazado.",
+                      )
+                      setOpen(false)
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "No se pudo procesar el convenio")
+                    }
                   }}
                   className="grid gap-3"
                 >
@@ -253,8 +257,9 @@ function ConvenioCard({
 // ── NuevoConvenioDialog (HU010) ───────────────────────────────────────────────
 
 function NuevoConvenioDialog() {
-  const { contracts, addConvenio, user } = useApp()
+  const { contracts, addConvenio } = useApp()
   const [open, setOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   // HU010: solo contratos activos pueden tener convenio
   const contratosActivos = useMemo(
@@ -289,23 +294,31 @@ function NuevoConvenioDialog() {
           </p>
         ) : (
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault()
               const fd = new FormData(e.currentTarget)
-              addConvenio({
-                contratoId,
-                tipo,
-                justificacion: String(fd.get("justificacion")),
-                montoAdicional: tipo === "plazo" ? 0 : Number(fd.get("monto") || 0),
-                diasAdicionales: tipo === "monto" ? 0 : Number(fd.get("dias") || 0),
-                documentos: Number(fd.get("docs") || 0),
-                solicitadoPor: user?.name ?? "",
-                fechaSolicitud: new Date().toISOString().slice(0, 10),
-                // Cambio 5: alcance del convenio (por defecto ajuste_monto_simple para convenios de monto)
-                alcance: tipo === "monto" ? "ajuste_monto_simple" : "ajuste_monto_simple",
-              })
-              toast.success("Solicitud de convenio modificatorio registrada")
-              setOpen(false)
+              const documentos = (fd.getAll("documentos") as File[]).filter((f) => f.size > 0)
+              setSubmitting(true)
+              try {
+                await addConvenio(
+                  {
+                    contratoId,
+                    tipo,
+                    justificacion: String(fd.get("justificacion")),
+                    montoAdicional: tipo === "plazo" ? 0 : Number(fd.get("monto") || 0),
+                    diasAdicionales: tipo === "monto" ? 0 : Number(fd.get("dias") || 0),
+                    // Cambio 5: alcance del convenio (por defecto ajuste_monto_simple)
+                    alcance: "ajuste_monto_simple",
+                  },
+                  documentos.length > 0 ? documentos : undefined,
+                )
+                toast.success("Solicitud de convenio modificatorio registrada")
+                setOpen(false)
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : "No se pudo registrar la solicitud")
+              } finally {
+                setSubmitting(false)
+              }
             }}
             className="grid gap-3"
           >
@@ -352,11 +365,13 @@ function NuevoConvenioDialog() {
               <Textarea id="justificacion" name="justificacion" rows={3} required />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="docs">Documentos de soporte (núm.)</Label>
-              <Input id="docs" name="docs" type="number" defaultValue={1} min={1} required />
+              <Label htmlFor="documentos">Documentos de soporte (opcional)</Label>
+              <Input id="documentos" name="documentos" type="file" multiple />
             </div>
             <DialogFooter>
-              <Button type="submit">Registrar solicitud</Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Registrando..." : "Registrar solicitud"}
+              </Button>
             </DialogFooter>
           </form>
         )}

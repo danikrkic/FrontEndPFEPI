@@ -2,8 +2,8 @@
 
 import { useState } from "react"
 import { ShieldCheck, Plus, FileText, Download } from "lucide-react"
-import type { Contract, Garantia, GarantiaTipo } from "@/lib/types"
-import { GARANTIA_TIPO_LABELS, calcularGarantiaStatus } from "@/lib/types"
+import type { Contract, GarantiaTipo } from "@/lib/types"
+import { GARANTIA_TIPO_LABELS } from "@/lib/types"
 import { useApp, can } from "@/lib/store"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { Button } from "@/components/ui/button"
@@ -50,13 +50,8 @@ const STATUS_LABELS: Record<string, string> = {
   liberada: "Liberada",
 }
 
-function getStatusEfectivo(g: Garantia) {
-  if (g.status === "liberada") return "liberada"
-  return calcularGarantiaStatus(g.fechaVigencia)
-}
-
 export function GarantiasPanel({ contract }: { contract: Contract }) {
-  const { user, garantias, addGarantia, garantiasTiposUsados } = useApp()
+  const { user, garantias, addGarantia, liberarGarantia, garantiasTiposUsados } = useApp()
   const puedeRegistrar = can(user?.role, "garantia.registrar")
 
   const garantiasContrato = garantias.filter((g) => g.contratoId === contract.id)
@@ -106,7 +101,6 @@ export function GarantiasPanel({ contract }: { contract: Contract }) {
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           {garantiasContrato.map((g) => {
-            const statusEfectivo = getStatusEfectivo(g)
             return (
               <Card key={g.id}>
                 <CardHeader className="pb-2">
@@ -117,9 +111,9 @@ export function GarantiasPanel({ contract }: { contract: Contract }) {
                       {GARANTIA_TIPO_LABELS[g.tipo]}
                     </span>
                     <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[statusEfectivo]}`}
+                      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[g.status]}`}
                     >
-                      {STATUS_LABELS[statusEfectivo]}
+                      {STATUS_LABELS[g.status]}
                     </span>
                   </div>
                   <CardTitle className="mt-2 text-lg">{formatCurrency(g.monto)}</CardTitle>
@@ -143,13 +137,34 @@ export function GarantiasPanel({ contract }: { contract: Contract }) {
                         size="icon"
                         variant="ghost"
                         className="h-6 w-6 shrink-0"
-                        onClick={() => toast.success(`Descargando ${g.documento!.nombre}`)}
+                        render={<a href={g.documento.archivo} target="_blank" rel="noopener noreferrer" />}
                       >
                         <Download className="h-3 w-3" />
                       </Button>
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground/60 mt-1">Sin póliza digitalizada</p>
+                  )}
+                  {puedeRegistrar && g.status !== "liberada" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() =>
+                        liberarGarantia(g.id)
+                          .then(() => toast.success("Garantía liberada"))
+                          .catch((err) =>
+                            toast.error(err instanceof Error ? err.message : "No se pudo liberar la garantía"),
+                          )
+                      }
+                    >
+                      Liberar garantía
+                    </Button>
+                  )}
+                  {g.liberadaPor && (
+                    <p className="text-xs mt-2">
+                      Liberada el {g.fechaLiberacion ? formatDate(g.fechaLiberacion) : ""} por {g.liberadaPor}
+                    </p>
                   )}
                 </CardContent>
               </Card>
@@ -185,9 +200,9 @@ function NuevaGarantiaDialog({
   tiposDisponibles: GarantiaTipo[]
   onAdd: ReturnType<typeof useApp>["addGarantia"]
 }) {
-  const { user } = useApp()
   const [open, setOpen] = useState(false)
   const [tipo, setTipo] = useState<GarantiaTipo>(tiposDisponibles[0] ?? "cumplimiento")
+  const [submitting, setSubmitting] = useState(false)
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -202,24 +217,31 @@ function NuevaGarantiaDialog({
           <DialogTitle>Registrar garantía / póliza de fianza</DialogTitle>
         </DialogHeader>
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
             const fd = new FormData(e.currentTarget)
-            onAdd({
-              contratoId: contract.id,
-              tipo,
-              institucionAfianzadora: String(fd.get("institucion")),
-              numeroPoliza: String(fd.get("poliza")),
-              monto: parseFloat(String(fd.get("monto"))) || 0,
-              fechaEmision: String(fd.get("fechaEmision")),
-              fechaVigencia: String(fd.get("fechaVigencia")),
-              status: "vigente",
-              documento: null,
-              fechaRegistro: new Date().toISOString().slice(0, 10),
-              registradoPor: user?.name ?? "",
-            })
-            toast.success("Garantía registrada")
-            setOpen(false)
+            const archivo = fd.get("archivo")
+            setSubmitting(true)
+            try {
+              await onAdd(
+                {
+                  contratoId: contract.id,
+                  tipo,
+                  institucionAfianzadora: String(fd.get("institucion")),
+                  numeroPoliza: String(fd.get("poliza")),
+                  monto: parseFloat(String(fd.get("monto"))) || 0,
+                  fechaEmision: String(fd.get("fechaEmision")),
+                  fechaVigencia: String(fd.get("fechaVigencia")),
+                },
+                archivo instanceof File && archivo.size > 0 ? archivo : undefined,
+              )
+              toast.success("Garantía registrada")
+              setOpen(false)
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "No se pudo registrar la garantía")
+            } finally {
+              setSubmitting(false)
+            }
           }}
           className="grid gap-4"
         >
@@ -286,8 +308,15 @@ function NuevaGarantiaDialog({
             </div>
           </div>
 
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="archivo">Póliza digitalizada (opcional)</Label>
+            <Input id="archivo" name="archivo" type="file" />
+          </div>
+
           <DialogFooter>
-            <Button type="submit">Registrar</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Registrando..." : "Registrar"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

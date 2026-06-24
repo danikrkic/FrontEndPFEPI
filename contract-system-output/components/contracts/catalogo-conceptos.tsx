@@ -43,22 +43,30 @@ export function CatalogoConceptos({ contract }: { contract: Contract }) {
   const conceptos = contract.catalogoConceptos
   const puedeEditar = can(user?.role, "detalle.registrar")
 
-  function addConcepto(c: Omit<ConceptoCatalogo, "id" | "total">) {
+  async function addConcepto(c: Omit<ConceptoCatalogo, "id" | "total">) {
     const nuevo: ConceptoCatalogo = {
       ...c,
       id: uid(),
       total: c.cantidad * c.precioUnitario,
     }
-    setCatalogoConceptos(contract.id, [...conceptos, nuevo])
-    toast.success("Concepto agregado al catálogo")
+    try {
+      await setCatalogoConceptos(contract.id, [...conceptos, nuevo])
+      toast.success("Concepto agregado al catálogo")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo agregar el concepto")
+    }
   }
 
-  function removeConcepto(id: string) {
-    setCatalogoConceptos(
-      contract.id,
-      conceptos.filter((c) => c.id !== id),
-    )
-    toast.success("Concepto eliminado")
+  async function removeConcepto(id: string) {
+    try {
+      await setCatalogoConceptos(
+        contract.id,
+        conceptos.filter((c) => c.id !== id),
+      )
+      toast.success("Concepto eliminado")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo eliminar el concepto")
+    }
   }
 
   return (
@@ -87,7 +95,11 @@ export function CatalogoConceptos({ contract }: { contract: Contract }) {
             conceptos={conceptos}
             modo={{ tipo: "catalogo" }}
             editable={puedeEditar}
-            onChange={(nuevos) => setCatalogoConceptos(contract.id, nuevos)}
+            onChange={(nuevos) =>
+              setCatalogoConceptos(contract.id, nuevos).catch((err) =>
+                toast.error(err instanceof Error ? err.message : "No se pudo actualizar el catálogo"),
+              )
+            }
           />
         )}
         {/* Botón de eliminar conceptos individualmente (fuera de CatalogoTable para mantener la lógica aquí) */}

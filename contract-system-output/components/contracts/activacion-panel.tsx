@@ -142,10 +142,14 @@ export function ActivacionPanel({ contract }: { contract: Contract }) {
                       Cancelar
                     </Button>
                     <Button
-                      onClick={() => {
-                        requestActivation(contract.id, user?.name ?? "")
-                        toast.success("Solicitud de activación enviada al Residente de Obra")
-                        setSolicitarOpen(false)
+                      onClick={async () => {
+                        try {
+                          await requestActivation(contract.id)
+                          toast.success("Solicitud de activación enviada al Residente de Obra")
+                          setSolicitarOpen(false)
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "No se pudo enviar la solicitud")
+                        }
                       }}
                     >
                       Confirmar solicitud
@@ -206,17 +210,21 @@ export function ActivacionPanel({ contract }: { contract: Contract }) {
                   checklist={checklist}
                   solicitadoPor={solicitud.solicitadoPor}
                   fechaSolicitud={solicitud.fechaSolicitud}
-                  onDecision={(aprobado, obs) => {
-                    reviewActivation(contract.id, aprobado, obs, user?.name ?? "")
-                    if (aprobado) {
-                      toast.success(
-                        "Contrato activado. La bitácora de obra ha sido abierta automáticamente.",
-                        { duration: 5000 },
-                      )
-                    } else {
-                      toast.error("Solicitud rechazada. La Dependencia debe corregir las observaciones.")
+                  onDecision={async (aprobado, obs) => {
+                    try {
+                      await reviewActivation(contract.id, aprobado, obs)
+                      if (aprobado) {
+                        toast.success(
+                          "Contrato activado. La bitácora de obra ha sido abierta automáticamente.",
+                          { duration: 5000 },
+                        )
+                      } else {
+                        toast.error("Solicitud rechazada. La Dependencia debe corregir las observaciones.")
+                      }
+                      setRevisarOpen(false)
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "No se pudo procesar la revisión")
                     }
-                    setRevisarOpen(false)
                   }}
                 />
               </Dialog>
@@ -276,9 +284,13 @@ export function ActivacionPanel({ contract }: { contract: Contract }) {
               <Button
                 disabled={!obligatoriasOk}
                 className="self-start"
-                onClick={() => {
-                  requestActivation(contract.id, user?.name ?? "")
-                  toast.success("Nueva solicitud de activación enviada al Residente de Obra")
+                onClick={async () => {
+                  try {
+                    await requestActivation(contract.id)
+                    toast.success("Nueva solicitud de activación enviada al Residente de Obra")
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : "No se pudo enviar la solicitud")
+                  }
                 }}
               >
                 <Rocket className="h-4 w-4" />
@@ -307,7 +319,7 @@ function RevisionDialog({
   checklist: CondicionActivacion[]
   solicitadoPor: string
   fechaSolicitud: string
-  onDecision: (aprobado: boolean, observaciones: string) => void
+  onDecision: (aprobado: boolean, observaciones: string) => Promise<void>
 }) {
   const [obs, setObs] = useState("")
 

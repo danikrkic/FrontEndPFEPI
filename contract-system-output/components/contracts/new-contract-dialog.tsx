@@ -34,93 +34,121 @@ export function NewContractDialog() {
     contratistas,
     residentes,
     supervisores,
+    superintendentes,
     addContratista,
     addResidente,
     addSupervisor,
+    addSuperintendente,
   } = useApp()
   const [open, setOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   // Selección de catálogos
   const [contratistaId, setContratistaId] = useState("")
   const [residenteId, setResidenteId] = useState("")
   const [supervisorId, setSupervisorId] = useState("")
+  const [superintendenteId, setSuperintendenteId] = useState("")
 
   function reset() {
     setContratistaId("")
     setResidenteId("")
     setSupervisorId("")
+    setSuperintendenteId("")
   }
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const fd = new FormData(e.currentTarget)
+    setSubmitting(true)
+    try {
+      // Contratista: existente o nuevo
+      let contratista: Contratista | undefined
+      if (contratistaId === NUEVO) {
+        const nombre = String(fd.get("ctNombre")).trim()
+        if (!nombre) return toast.error("Captura el nombre del contratista")
+        contratista = await addContratista({
+          nombre,
+          rfc: String(fd.get("ctRfc")),
+          representante: String(fd.get("ctRep")),
+          telefono: String(fd.get("ctTel")),
+          correo: String(fd.get("ctCorreo")),
+        })
+      } else {
+        contratista = contratistas.find((c) => c.id === contratistaId)
+      }
+      if (!contratista) return toast.error("Selecciona o registra un contratista")
 
-    // Contratista: existente o nuevo
-    let contratista: Contratista | undefined
-    if (contratistaId === NUEVO) {
-      const nombre = String(fd.get("ctNombre")).trim()
-      if (!nombre) return toast.error("Captura el nombre del contratista")
-      contratista = addContratista({
-        nombre,
-        rfc: String(fd.get("ctRfc")),
-        representante: String(fd.get("ctRep")),
-        telefono: String(fd.get("ctTel")),
-        correo: String(fd.get("ctCorreo")),
+      // Residente: existente o nuevo
+      let residente: Persona | undefined
+      if (residenteId === NUEVO) {
+        const nombre = String(fd.get("rNombre")).trim()
+        if (!nombre) return toast.error("Captura el nombre del residente")
+        residente = await addResidente({
+          nombre,
+          rfc: String(fd.get("rRfc")),
+          telefono: String(fd.get("rTel")),
+          correo: String(fd.get("rCorreo")),
+        })
+      } else {
+        residente = residentes.find((r) => r.id === residenteId)
+      }
+      if (!residente) return toast.error("Asigna un residente de obra")
+
+      // Supervisor: existente o nuevo
+      let supervisor: Persona | undefined
+      if (supervisorId === NUEVO) {
+        const nombre = String(fd.get("sNombre")).trim()
+        if (!nombre) return toast.error("Captura el nombre del supervisor")
+        supervisor = await addSupervisor({
+          nombre,
+          rfc: String(fd.get("sRfc")),
+          telefono: String(fd.get("sTel")),
+          correo: String(fd.get("sCorreo")),
+        })
+      } else {
+        supervisor = supervisores.find((s) => s.id === supervisorId)
+      }
+      if (!supervisor) return toast.error("Asigna un supervisor")
+
+      // Superintendente: existente o nuevo
+      let superintendente: Persona | undefined
+      if (superintendenteId === NUEVO) {
+        const nombre = String(fd.get("siNombre")).trim()
+        if (!nombre) return toast.error("Captura el nombre del superintendente")
+        superintendente = await addSuperintendente({
+          nombre,
+          rfc: String(fd.get("siRfc")),
+          telefono: String(fd.get("siTel")),
+          correo: String(fd.get("siCorreo")),
+        })
+      } else {
+        superintendente = superintendentes.find((s) => s.id === superintendenteId)
+      }
+      if (!superintendente) return toast.error("Asigna un superintendente")
+
+      await addContract({
+        noContrato: String(fd.get("noContrato")),
+        objeto: String(fd.get("objeto")),
+        descripcion: String(fd.get("descripcion")),
+        monto: Number(fd.get("monto")),
+        plazoDias: Number(fd.get("plazoDias")),
+        fechaInicio: String(fd.get("fechaInicio")),
+        fechaTermino: String(fd.get("fechaTermino")),
+        ubicacion: String(fd.get("ubicacion")),
+        status: "registrado",
+        contratista,
+        residente,
+        supervisor,
+        superintendente,
       })
-    } else {
-      contratista = contratistas.find((c) => c.id === contratistaId)
+      toast.success("Contrato registrado correctamente")
+      reset()
+      setOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo registrar el contrato")
+    } finally {
+      setSubmitting(false)
     }
-    if (!contratista) return toast.error("Selecciona o registra un contratista")
-
-    // Residente: existente o nuevo
-    let residente: Persona | undefined
-    if (residenteId === NUEVO) {
-      const nombre = String(fd.get("rNombre")).trim()
-      if (!nombre) return toast.error("Captura el nombre del residente")
-      residente = addResidente({
-        nombre,
-        rfc: String(fd.get("rRfc")),
-        telefono: String(fd.get("rTel")),
-        correo: String(fd.get("rCorreo")),
-      })
-    } else {
-      residente = residentes.find((r) => r.id === residenteId)
-    }
-    if (!residente) return toast.error("Asigna un residente de obra")
-
-    // Supervisor: existente o nuevo
-    let supervisor: Persona | undefined
-    if (supervisorId === NUEVO) {
-      const nombre = String(fd.get("sNombre")).trim()
-      if (!nombre) return toast.error("Captura el nombre del supervisor")
-      supervisor = addSupervisor({
-        nombre,
-        rfc: String(fd.get("sRfc")),
-        telefono: String(fd.get("sTel")),
-        correo: String(fd.get("sCorreo")),
-      })
-    } else {
-      supervisor = supervisores.find((s) => s.id === supervisorId)
-    }
-    if (!supervisor) return toast.error("Asigna un supervisor")
-
-    addContract({
-      noContrato: String(fd.get("noContrato")),
-      objeto: String(fd.get("objeto")),
-      descripcion: String(fd.get("descripcion")),
-      monto: Number(fd.get("monto")),
-      plazoDias: Number(fd.get("plazoDias")),
-      fechaInicio: String(fd.get("fechaInicio")),
-      fechaTermino: String(fd.get("fechaTermino")),
-      ubicacion: String(fd.get("ubicacion")),
-      status: "registrado",
-      contratista,
-      residente,
-      supervisor,
-    })
-    toast.success("Contrato registrado correctamente")
-    reset()
-    setOpen(false)
   }
 
   return (
@@ -230,8 +258,21 @@ export function NewContractDialog() {
             prefix="s"
           />
 
+          {/* Asignación de superintendente */}
+          <p className="mt-2 text-sm font-semibold text-foreground">Superintendente</p>
+          <PersonPicker
+            value={superintendenteId}
+            onChange={setSuperintendenteId}
+            people={superintendentes}
+            placeholder="Asigna un superintendente"
+            nuevoLabel="+ Registrar nuevo superintendente"
+            prefix="si"
+          />
+
           <DialogFooter className="mt-2">
-            <Button type="submit">Registrar contrato</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Registrando..." : "Registrar contrato"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

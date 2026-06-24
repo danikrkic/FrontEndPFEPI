@@ -113,9 +113,18 @@ export function ProgramaObra({ contract }: { contract: Contract }) {
     return concepto.cantidad - cantidadAsignada(conceptoId)
   }
 
-  function handleGuardar() {
-    setProgramaObra(contract.id, draft)
-    toast.success("Programa de obra guardado")
+  const [guardando, setGuardando] = useState(false)
+
+  async function handleGuardar() {
+    setGuardando(true)
+    try {
+      await setProgramaObra(contract.id, draft)
+      toast.success("Programa de obra guardado")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo guardar el programa")
+    } finally {
+      setGuardando(false)
+    }
   }
 
   // ── Curva S ────────────────────────────────────────────────────────────────
@@ -197,9 +206,9 @@ export function ProgramaObra({ contract }: { contract: Contract }) {
           </TabsTrigger>
         </TabsList>
         {puedeEditar && (
-          <Button size="sm" onClick={handleGuardar}>
+          <Button size="sm" onClick={handleGuardar} disabled={guardando}>
             <Save className="h-4 w-4" />
-            Guardar programa
+            {guardando ? "Guardando..." : "Guardar programa"}
           </Button>
         )}
       </div>
