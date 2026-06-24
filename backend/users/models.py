@@ -17,10 +17,12 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=Role.choices)
     initials = models.CharField(max_length=4, blank=True)
-    persona_id = models.CharField(
-        max_length=50,
-        blank=True,
+    persona = models.ForeignKey(
+        "contracts.Persona",
+        on_delete=models.SET_NULL,
         null=True,
+        blank=True,
+        related_name="usuarios",
         help_text="Vincula esta cuenta a una Persona (residente) para control de acceso a bitácora.",
     )
 

@@ -6,6 +6,7 @@ from .models import User
 
 class UserSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
+    persona_id = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = User

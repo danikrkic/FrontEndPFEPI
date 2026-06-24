@@ -1,13 +1,14 @@
 from django.core.management.base import BaseCommand
 
+from contracts.models import Persona
 from users.models import User
 
 DEMO_USERS = [
     ("Daniel Lopez", "dependencia@gacm.mx", "dependencia", "DL", None),
     ("Carmen Ríos", "dependencia2@gacm.mx", "dependencia", "CR", None),
-    ("Diego Ramírez", "residente@gacm.mx", "residente", "DR", "r1"),
-    ("Mariana Flores", "residente2@gacm.mx", "residente", "MF", "r2"),
-    ("Hugo Treviño", "residente3@gacm.mx", "residente", "HT", "r3"),
+    ("Diego Ramírez", "residente@gacm.mx", "residente", "DR", "Diego Ramírez"),
+    ("Mariana Flores", "residente2@gacm.mx", "residente", "MF", "Mariana Flores"),
+    ("Hugo Treviño", "residente3@gacm.mx", "residente", "HT", "Hugo Treviño"),
     ("Víctor Castro", "superintendente@gacm.mx", "superintendente", "VC", None),
     ("Laura Sánchez", "superintendente2@gacm.mx", "superintendente", "LS", None),
     ("Arturo Mendoza", "supervision@gacm.mx", "supervision", "AM", None),
@@ -23,9 +24,11 @@ class Command(BaseCommand):
     help = "Crea los usuarios de demo (uno por rol) replicando lib/mock-data.ts del frontend."
 
     def handle(self, *args, **options):
-        for name, email, role, initials, persona_id in DEMO_USERS:
+        for name, email, role, initials, persona_nombre in DEMO_USERS:
             first_name, *rest = name.split(" ", 1)
             last_name = rest[0] if rest else ""
+            persona = Persona.objects.filter(nombre=persona_nombre).first() if persona_nombre else None
+
             user, created = User.objects.get_or_create(
                 email=email,
                 defaults={
@@ -34,7 +37,7 @@ class Command(BaseCommand):
                     "last_name": last_name,
                     "role": role,
                     "initials": initials,
-                    "persona_id": persona_id,
+                    "persona": persona,
                 },
             )
             if created:
@@ -42,4 +45,7 @@ class Command(BaseCommand):
                 user.save()
                 self.stdout.write(self.style.SUCCESS(f"Creado: {email} ({role})"))
             else:
+                if persona and user.persona_id != persona.id:
+                    user.persona = persona
+                    user.save(update_fields=["persona"])
                 self.stdout.write(f"Ya existía: {email}")

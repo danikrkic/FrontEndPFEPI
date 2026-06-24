@@ -8,8 +8,8 @@ from .models import User
 class UserAdmin(DjangoUserAdmin):
     list_display = ("email", "first_name", "last_name", "role", "is_staff")
     fieldsets = DjangoUserAdmin.fieldsets + (
-        ("Datos GACM", {"fields": ("role", "initials", "persona_id")}),
+        ("Datos GACM", {"fields": ("role", "initials", "persona")}),
     )
     add_fieldsets = DjangoUserAdmin.add_fieldsets + (
-        ("Datos GACM", {"fields": ("role", "initials", "persona_id")}),
+        ("Datos GACM", {"fields": ("role", "initials", "persona")}),
     )
