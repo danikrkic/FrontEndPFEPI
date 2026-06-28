@@ -1,4 +1,7 @@
+"use client"
+
 import type { Contract } from "@/lib/types"
+import { useApp } from "@/lib/store"
 import { formatDate, formatMoneyFull } from "@/lib/format"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -12,6 +15,16 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 export function ContractInfo({ contract }: { contract: Contract }) {
+  const { contratistas, empresasSupervision } = useApp()
+
+  const empresaSup = contract.supervisor.empresaSupervision
+    ? empresasSupervision.find((e) => e.id === contract.supervisor.empresaSupervision)
+    : null
+
+  const empresaCont = contract.superintendente.empresaContratista
+    ? contratistas.find((c) => c.id === contract.superintendente.empresaContratista)
+    : null
+
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <Card>
@@ -60,6 +73,7 @@ export function ContractInfo({ contract }: { contract: Contract }) {
           <CardTitle className="text-base">Supervisor</CardTitle>
         </CardHeader>
         <CardContent className="pt-0">
+          {empresaSup && <Row label="Empresa de supervisión" value={empresaSup.nombre} />}
           <Row label="Nombre" value={contract.supervisor.nombre} />
           <Row label="RFC" value={contract.supervisor.rfc} />
           <Row label="Teléfono" value={contract.supervisor.telefono} />
@@ -72,6 +86,7 @@ export function ContractInfo({ contract }: { contract: Contract }) {
           <CardTitle className="text-base">Superintendente</CardTitle>
         </CardHeader>
         <CardContent className="pt-0">
+          {empresaCont && <Row label="Empresa contratista" value={empresaCont.nombre} />}
           <Row label="Nombre" value={contract.superintendente.nombre} />
           <Row label="RFC" value={contract.superintendente.rfc} />
           <Row label="Teléfono" value={contract.superintendente.telefono} />

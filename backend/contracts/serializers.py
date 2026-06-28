@@ -1,3 +1,6 @@
+from datetime import timedelta
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import (
@@ -13,28 +16,54 @@ from .models import (
     Contratista,
     Convenio,
     ConvenioDocumento,
+    EmpresaSupervision,
     Estimacion,
     Garantia,
     Incumplimiento,
+    LineaEstimacion,
     Minuta,
     OrdenPago,
     Persona,
     ProgramaObra,
     SolicitudActivacion,
     calcular_garantia_status,
+    sugerir_notas_concepto_terminado,
 )
 
 
-class ContratistaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Contratista
-        fields = ["id", "nombre", "rfc", "representante", "telefono", "correo"]
-
-
-class PersonaSerializer(serializers.ModelSerializer):
+class PersonaCompactSerializer(serializers.ModelSerializer):
     class Meta:
         model = Persona
         fields = ["id", "nombre", "rfc", "telefono", "correo"]
+
+
+class ContratistaSerializer(serializers.ModelSerializer):
+    superintendentes = PersonaCompactSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Contratista
+        fields = ["id", "nombre", "rfc", "representante", "telefono", "correo", "superintendentes"]
+
+
+class EmpresaSupervisionSerializer(serializers.ModelSerializer):
+    supervisores = PersonaCompactSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = EmpresaSupervision
+        fields = ["id", "nombre", "rfc", "representante", "telefono", "correo", "supervisores"]
+
+
+class PersonaSerializer(serializers.ModelSerializer):
+    empresa_contratista = serializers.PrimaryKeyRelatedField(
+        queryset=Contratista.objects.all(), allow_null=True, required=False
+    )
+    empresa_supervision = serializers.PrimaryKeyRelatedField(
+        queryset=EmpresaSupervision.objects.all(), allow_null=True, required=False
+    )
+
+    class Meta:
+        model = Persona
+        fields = ["id", "nombre", "rfc", "telefono", "correo", "empresa_contratista", "empresa_supervision"]
 
 
 class ConceptoCatalogoSerializer(serializers.ModelSerializer):
@@ -52,7 +81,7 @@ class ContractDocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContractDocument
         fields = ["id", "bloque", "nombre", "archivo", "formato", "tamano", "fecha", "subido_por"]
-        read_only_fields = ["formato", "tamano"]
+        read_only_fields = ["formato", "tamano", "fecha"]
 
     def get_subido_por(self, obj):
         return obj.subido_por.get_full_name() if obj.subido_por else None
@@ -95,18 +124,42 @@ class BitacoraNoteFotoSerializer(serializers.ModelSerializer):
 class BitacoraNoteSerializer(serializers.ModelSerializer):
     autor = serializers.SerializerMethodField()
     fotos = BitacoraNoteFotoSerializer(many=True, read_only=True)
+    conceptos = serializers.SerializerMethodField()
+    nota_padre_numero = serializers.SerializerMethodField()
 
     class Meta:
         model = BitacoraNote
-        fields = ["id", "numero", "tipo", "contenido", "autor", "rol", "fecha", "firmas", "fotos"]
+        fields = [
+            "id", "numero", "tipo", "contenido", "autor", "rol", "fecha",
+            "firmas", "fotos", "conceptos", "nota_padre_numero",
+        ]
 
     def get_autor(self, obj):
         return obj.autor.get_full_name() if obj.autor else None
+
+    def get_conceptos(self, obj):
+        return [{"id": c.id, "clave": c.clave} for c in obj.conceptos.all()]
+
+    def get_nota_padre_numero(self, obj):
+        return obj.nota_padre.numero if obj.nota_padre_id else None
 
 
 class BitacoraNoteCreateSerializer(serializers.Serializer):
     tipo = serializers.ChoiceField(choices=BitacoraNote.Tipo.choices)
     contenido = serializers.CharField()
+    conceptos = serializers.PrimaryKeyRelatedField(
+        queryset=ConceptoCatalogo.objects.all(), many=True, required=False, default=list
+    )
+    nota_padre = serializers.PrimaryKeyRelatedField(
+        queryset=BitacoraNote.objects.all(), required=False, allow_null=True, default=None
+    )
+
+    def validate(self, data):
+        if data.get("tipo") == BitacoraNote.Tipo.CONCEPTO_TERMINADO and not data.get("conceptos"):
+            raise serializers.ValidationError(
+                {"conceptos": "Debe seleccionar al menos un concepto para este tipo de nota."}
+            )
+        return data
 
 
 class BitacoraSerializer(serializers.ModelSerializer):
@@ -142,13 +195,55 @@ class OrdenPagoSerializer(serializers.ModelSerializer):
         read_only_fields = ["contrato", "estimacion", "monto", "fecha_emision", "status", "fecha_atencion"]
 
 
+class LineaEstimacionSerializer(serializers.ModelSerializer):
+    concepto_id = serializers.IntegerField(source="concepto_id", read_only=True)
+    clave = serializers.CharField(source="concepto.clave", read_only=True)
+    descripcion = serializers.CharField(source="concepto.descripcion", read_only=True)
+    unidad = serializers.CharField(source="concepto.unidad", read_only=True)
+    cantidad_contratada = serializers.DecimalField(
+        source="concepto.cantidad", max_digits=14, decimal_places=2, read_only=True
+    )
+    porcentaje_avance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LineaEstimacion
+        fields = [
+            "id",
+            "concepto_id",
+            "clave",
+            "descripcion",
+            "unidad",
+            "cantidad_contratada",
+            "cantidad_ejecutada",
+            "cantidad_acumulada",
+            "generador_detalle",
+            "porcentaje_avance",
+        ]
+
+    def get_porcentaje_avance(self, obj):
+        if not obj.concepto.cantidad:
+            return 0
+        return round(float(obj.cantidad_acumulada / obj.concepto.cantidad * 100), 1)
+
+
+class LineaEstimacionInputSerializer(serializers.Serializer):
+    concepto_id = serializers.PrimaryKeyRelatedField(
+        queryset=ConceptoCatalogo.objects.all(), source="concepto"
+    )
+    cantidad_ejecutada = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
+    generador_detalle = serializers.CharField(required=False, allow_blank=True, default="")
+
+
 class EstimacionSerializer(serializers.ModelSerializer):
     contrato = ContractCompactSerializer(read_only=True)
     contrato_id = serializers.PrimaryKeyRelatedField(
         queryset=Contract.objects.all(), source="contrato", write_only=True
     )
     creada_por = serializers.SerializerMethodField()
+    creada_por_id = serializers.IntegerField(read_only=True, allow_null=True)
     orden_pago = OrdenPagoSerializer(read_only=True, default=None)
+    lineas = LineaEstimacionSerializer(many=True, read_only=True)
+    conceptos_sugeridos_terminados = serializers.SerializerMethodField()
 
     class Meta:
         model = Estimacion
@@ -166,6 +261,7 @@ class EstimacionSerializer(serializers.ModelSerializer):
             "status",
             "observaciones",
             "creada_por",
+            "creada_por_id",
             "fecha_creacion",
             "importe_bruto",
             "amortizacion_anticipo",
@@ -173,6 +269,8 @@ class EstimacionSerializer(serializers.ModelSerializer):
             "iva",
             "importe_neto",
             "orden_pago",
+            "lineas",
+            "conceptos_sugeridos_terminados",
         ]
         read_only_fields = [
             "numero",
@@ -186,6 +284,9 @@ class EstimacionSerializer(serializers.ModelSerializer):
 
     def get_creada_por(self, obj):
         return obj.creada_por.get_full_name() if obj.creada_por else None
+
+    def get_conceptos_sugeridos_terminados(self, obj):
+        return [{"id": c.id, "clave": c.clave} for c in sugerir_notas_concepto_terminado(obj)]
 
 
 class GarantiaSerializer(serializers.ModelSerializer):
@@ -254,6 +355,23 @@ class AnticipoSerializer(serializers.ModelSerializer):
             "garantia",
         ]
         read_only_fields = ["saldo_pendiente"]
+
+    def validate(self, attrs):
+        garantia = attrs.get("garantia")
+        monto_otorgado = attrs.get("monto_otorgado")
+        porcentaje_contrato = attrs.get("porcentaje_contrato")
+        if garantia and monto_otorgado is not None and garantia.monto != monto_otorgado:
+            raise serializers.ValidationError({
+                "garantia": (
+                    f"El monto de la garantía ({garantia.monto}) debe coincidir "
+                    f"con el monto del anticipo ({monto_otorgado})."
+                )
+            })
+        if porcentaje_contrato is not None and porcentaje_contrato > 50:
+            raise serializers.ValidationError({
+                "porcentaje_contrato": "El anticipo no puede exceder el 50% del monto contratado."
+            })
+        return attrs
 
 
 class ConvenioConceptoAfectadoSerializer(serializers.Serializer):
@@ -371,14 +489,14 @@ class MinutaSerializer(serializers.ModelSerializer):
         return obj.autor.get_full_name() if obj.autor else None
 
 
-class SemanaConceptoSerializer(serializers.Serializer):
-    semana = serializers.IntegerField(min_value=1)
+class MesConceptoSerializer(serializers.Serializer):
+    mes = serializers.IntegerField(min_value=1)
     cantidad = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=0)
 
 
 class ConceptoProgramaSerializer(serializers.Serializer):
     concepto_id = serializers.IntegerField()
-    semanas = SemanaConceptoSerializer(many=True)
+    meses = MesConceptoSerializer(many=True)
 
 
 class ProgramaObraSerializer(serializers.ModelSerializer):
@@ -388,6 +506,7 @@ class ProgramaObraSerializer(serializers.ModelSerializer):
 
 
 class ContractSerializer(serializers.ModelSerializer):
+    acumulado_convenios = serializers.SerializerMethodField()
     contratista = ContratistaSerializer(read_only=True)
     contratista_id = serializers.PrimaryKeyRelatedField(
         queryset=Contratista.objects.all(), source="contratista", write_only=True
@@ -403,6 +522,13 @@ class ContractSerializer(serializers.ModelSerializer):
     superintendente = PersonaSerializer(read_only=True)
     superintendente_id = serializers.PrimaryKeyRelatedField(
         queryset=Persona.objects.all(), source="superintendente", write_only=True
+    )
+    empresa_supervision_id = serializers.PrimaryKeyRelatedField(
+        queryset=EmpresaSupervision.objects.all(),
+        source="empresa_supervision",
+        write_only=True,
+        required=False,
+        allow_null=True,
     )
     documentos = ContractDocumentSerializer(many=True, read_only=True)
     catalogo_conceptos = ConceptoCatalogoSerializer(many=True, read_only=True)
@@ -426,7 +552,9 @@ class ContractSerializer(serializers.ModelSerializer):
             "objeto",
             "descripcion",
             "monto",
+            "monto_original",
             "plazo_dias",
+            "plazo_dias_original",
             "fecha_inicio",
             "fecha_termino",
             "ubicacion",
@@ -438,6 +566,7 @@ class ContractSerializer(serializers.ModelSerializer):
             "supervisor_id",
             "superintendente",
             "superintendente_id",
+            "empresa_supervision_id",
             "status",
             "version",
             "avance_programado",
@@ -456,11 +585,56 @@ class ContractSerializer(serializers.ModelSerializer):
             "incumplimientos",
             "minutas",
             "programa_obra",
+            "acumulado_convenios",
         ]
-        read_only_fields = ["status", "version", "avance_programado", "avance_real", "fecha_activacion"]
+        read_only_fields = [
+            "monto_original", "plazo_dias_original", "acumulado_convenios",
+            "status", "version", "avance_programado", "avance_real", "fecha_activacion", "fecha_termino",
+        ]
+
+    def validate(self, data):
+        fecha_inicio = data.get("fecha_inicio", getattr(self.instance, "fecha_inicio", None))
+        plazo_dias = data.get("plazo_dias", getattr(self.instance, "plazo_dias", None))
+        if fecha_inicio and plazo_dias is not None:
+            data["fecha_termino"] = fecha_inicio + timedelta(days=plazo_dias)
+
+        contratista = data.get("contratista", getattr(self.instance, "contratista", None))
+        superintendente = data.get("superintendente", getattr(self.instance, "superintendente", None))
+        if contratista and superintendente and superintendente.empresa_contratista_id != contratista.id:
+            raise serializers.ValidationError({
+                "superintendente_id": "El superintendente no pertenece a la empresa contratista seleccionada."
+            })
+
+        empresa_supervision = data.get("empresa_supervision", getattr(self.instance, "empresa_supervision", None))
+        supervisor = data.get("supervisor", getattr(self.instance, "supervisor", None))
+        if empresa_supervision and supervisor and supervisor.empresa_supervision_id != empresa_supervision.id:
+            raise serializers.ValidationError({
+                "supervisor_id": "El supervisor no pertenece a la empresa de supervisión seleccionada."
+            })
+
+        residente = data.get("residente", getattr(self.instance, "residente", None))
+        if residente and supervisor and residente.id == supervisor.id:
+            raise serializers.ValidationError({
+                "supervisor_id": "El supervisor no puede ser la misma persona que el residente."
+            })
+
+        if supervisor and contratista and getattr(supervisor, "empresa_contratista_id", None) == contratista.id:
+            raise serializers.ValidationError({
+                "supervisor_id": "La supervisión no puede pertenecer a la empresa contratista."
+            })
+
+        return data
+
+    def get_acumulado_convenios(self, obj):
+        from .models import calcular_acumulado_convenios
+        return calcular_acumulado_convenios(obj)
 
     def create(self, validated_data):
         contract = Contract.objects.create(**validated_data)
+        # Fijar montos originales en la creación
+        contract.monto_original = contract.monto
+        contract.plazo_dias_original = contract.plazo_dias
+        contract.save(update_fields=["monto_original", "plazo_dias_original"])
         ContractVersion.objects.create(
             contrato=contract,
             version=1,

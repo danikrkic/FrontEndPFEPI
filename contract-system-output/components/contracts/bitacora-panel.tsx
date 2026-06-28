@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import { BookOpen, PenLine } from "lucide-react"
 import type { Contract, NoteType } from "@/lib/types"
 import { NOTE_TYPE_LABELS, ROLE_LABELS } from "@/lib/types"
@@ -28,7 +28,8 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 
-const NOTE_TYPES: NoteType[] = ["instruccion", "respuesta", "acuerdo", "observacion"]
+const NOTE_TYPES_BASE: NoteType[] = ["instruccion", "respuesta", "acuerdo", "observacion"]
+const NOTE_TYPES_RESIDENTE: NoteType[] = [...NOTE_TYPES_BASE, "concepto_terminado"]
 
 /**
  * Verifica si el usuario actualmente logueado es el residente asignado
@@ -123,7 +124,7 @@ export function BitacoraPanel({ contract }: { contract: Contract }) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos los tipos</SelectItem>
-                  {NOTE_TYPES.map((t) => (
+                  {NOTE_TYPES_RESIDENTE.map((t) => (
                     <SelectItem key={t} value={t}>
                       {NOTE_TYPE_LABELS[t]}
                     </SelectItem>
@@ -190,6 +191,11 @@ export function BitacoraPanel({ contract }: { contract: Contract }) {
                 </div>
                 <span className="text-xs text-muted-foreground">{formatDate(n.fecha)}</span>
               </div>
+              {n.notaPadreNumero != null && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  En respuesta a nota <span className="font-medium">#{n.notaPadreNumero}</span>
+                </p>
+              )}
               <p className="mt-2 text-sm text-foreground">{n.contenido}</p>
               <div className="mt-3 border-t border-border pt-3">
                 <p className="mb-2 text-xs font-medium text-muted-foreground">
@@ -310,10 +316,29 @@ function NotaDialog({
   contract: Contract
   addNote: ReturnType<typeof useApp>["addNote"]
 }) {
-  const { user } = useApp()
+  const { user, bitacoras } = useApp()
+  const bitacora = bitacoras.find((b) => b.contratoId === contract.id)
   const [open, setOpen] = useState(false)
   const [tipo, setTipo] = useState<NoteType>("instruccion")
+  const [selectedConceptos, setSelectedConceptos] = useState<string[]>([])
+  const [notaPadreId, setNotaPadreId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (!open) {
+      setTipo("instruccion")
+      setSelectedConceptos([])
+      setNotaPadreId(null)
+    }
+  }, [open])
+
+  const notasReferenciables = useMemo(() => {
+    if (!bitacora) return []
+    if (tipo !== "respuesta" && tipo !== "acuerdo") return []
+    return bitacora.notas
+  }, [bitacora, tipo])
+
+  const tiposDisponibles = user?.role === "residente" ? NOTE_TYPES_RESIDENTE : NOTE_TYPES_BASE
 
   const autorNombre = user?.name ?? ""
   const responsables = useMemo(() => {
@@ -325,6 +350,12 @@ function NotaDialog({
     return lista.filter((r) => r.nombre !== autorNombre)
   }, [contract, autorNombre])
 
+  function toggleConcepto(id: string) {
+    setSelectedConceptos((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -333,7 +364,7 @@ function NotaDialog({
           Registrar nota
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Registrar nota en bitácora</DialogTitle>
         </DialogHeader>
@@ -342,12 +373,23 @@ function NotaDialog({
             e.preventDefault()
             const fd = new FormData(e.currentTarget)
             if (!user) return
+            if (tipo === "concepto_terminado" && selectedConceptos.length === 0) {
+              toast.error("Selecciona al menos un concepto para este tipo de nota.")
+              return
+            }
             const fotos = (fd.getAll("fotos") as File[]).filter((f) => f.size > 0)
             setSubmitting(true)
             try {
               await addNote(
                 contract.id,
-                { tipo, contenido: String(fd.get("contenido")) },
+                {
+                  tipo,
+                  contenido: String(fd.get("contenido")),
+                  ...(tipo === "concepto_terminado" && { conceptos: selectedConceptos }),
+                  ...((tipo === "respuesta" || tipo === "acuerdo") && notaPadreId
+                    ? { notaPadreId }
+                    : {}),
+                },
                 fotos.length > 0 ? fotos : undefined,
               )
               toast.success("Nota registrada con las firmas de los responsables")
@@ -362,12 +404,12 @@ function NotaDialog({
         >
           <div className="flex flex-col gap-2">
             <Label>Tipo de nota</Label>
-            <Select value={tipo} onValueChange={(v) => setTipo(v as NoteType)}>
+            <Select value={tipo} onValueChange={(v) => { setTipo(v as NoteType); setSelectedConceptos([]) }}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {NOTE_TYPES.map((t) => (
+                {tiposDisponibles.map((t) => (
                   <SelectItem key={t} value={t}>
                     {NOTE_TYPE_LABELS[t]}
                   </SelectItem>
@@ -375,6 +417,61 @@ function NotaDialog({
               </SelectContent>
             </Select>
           </div>
+
+          {/* Selector de nota padre: para respuesta/acuerdo (Punto K) */}
+          {(tipo === "respuesta" || tipo === "acuerdo") && notasReferenciables.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <Label>En respuesta a nota (opcional)</Label>
+              <Select
+                value={notaPadreId ?? "ninguna"}
+                onValueChange={(v) => setNotaPadreId(v === "ninguna" ? null : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Ninguna" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ninguna">Ninguna</SelectItem>
+                  {notasReferenciables.map((n) => (
+                    <SelectItem key={n.id} value={n.id}>
+                      #{n.numero} · {NOTE_TYPE_LABELS[n.tipo]} — {n.contenido.slice(0, 50)}
+                      {n.contenido.length > 50 ? "…" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Selector de conceptos: solo para concepto_terminado */}
+          {tipo === "concepto_terminado" && contract.catalogoConceptos.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <Label>Conceptos terminados <span className="text-destructive">*</span></Label>
+              <p className="text-xs text-muted-foreground">
+                Selecciona los conceptos que han alcanzado el 100% de su cantidad contratada.
+              </p>
+              <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+                {contract.catalogoConceptos.map((c) => (
+                  <label
+                    key={c.id}
+                    className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-2 last:border-0 hover:bg-muted/40"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5"
+                      checked={selectedConceptos.includes(c.id)}
+                      onChange={() => toggleConcepto(c.id)}
+                    />
+                    <span className="text-xs font-medium">{c.clave}</span>
+                    <span className="truncate text-xs text-muted-foreground">{c.descripcion}</span>
+                  </label>
+                ))}
+              </div>
+              {selectedConceptos.length === 0 && (
+                <p className="text-xs text-destructive">Selecciona al menos un concepto.</p>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-col gap-2">
             <Label htmlFor="contenido">Contenido</Label>
             <Textarea id="contenido" name="contenido" rows={4} required />

@@ -7,6 +7,7 @@ from contracts.models import (
     ContractDocument,
     ContractVersion,
     Contratista,
+    EmpresaSupervision,
     Persona,
     construir_firmas,
 )
@@ -19,21 +20,28 @@ CONTRATISTAS = [
     dict(nombre="Vías del Norte", rfc="VNO110815RT5", representante="Sofía Herrera", telefono="55-2233-4455", correo="contacto@viasdelnorte.mx"),
 ]
 
+EMPRESAS_SUPERVISION = [
+    dict(nombre="Supervisión AESA", rfc="SAE010101AB1", representante="Arturo Mendoza", telefono="55-4001-2001", correo="contacto@aesa.mx"),
+    dict(nombre="Consultores GPC", rfc="CGP020202XY9", representante="Ricardo Salas", telefono="55-4001-2003", correo="proyectos@gpc.mx"),
+]
+
 RESIDENTES = [
     dict(nombre="Diego Ramírez", rfc="RAGD850301HMC", telefono="55-3001-1001", correo="diego.ramirez@gacm.mx"),
     dict(nombre="Mariana Flores", rfc="FOMA880712MDF", telefono="55-3001-1002", correo="mariana.flores@gacm.mx"),
     dict(nombre="Hugo Treviño", rfc="TEVH790920HNL", telefono="55-3001-1003", correo="hugo.trevino@gacm.mx"),
 ]
 
+# (datos, nombre_empresa_supervision)
 SUPERVISORES = [
-    dict(nombre="Arturo Mendoza", rfc="MEAA820505HDF", telefono="55-4001-2001", correo="arturo.mendoza@gacm.mx"),
-    dict(nombre="Patricia Núñez", rfc="NUPP900218MDF", telefono="55-4001-2002", correo="patricia.nunez@gacm.mx"),
-    dict(nombre="Ricardo Salas", rfc="SARR751130HJC", telefono="55-4001-2003", correo="ricardo.salas@gacm.mx"),
+    (dict(nombre="Arturo Mendoza", rfc="MEAA820505HDF", telefono="55-4001-2001", correo="arturo.mendoza@gacm.mx"), "Supervisión AESA"),
+    (dict(nombre="Patricia Núñez", rfc="NUPP900218MDF", telefono="55-4001-2002", correo="patricia.nunez@gacm.mx"), "Supervisión AESA"),
+    (dict(nombre="Ricardo Salas", rfc="SARR751130HJC", telefono="55-4001-2003", correo="ricardo.salas@gacm.mx"), "Consultores GPC"),
 ]
 
+# (datos, nombre_contratista)
 SUPERINTENDENTES = [
-    dict(nombre="Víctor Castro", rfc="CAVI780815HDF", telefono="55-5001-3001", correo="victor.castro@contratista.mx"),
-    dict(nombre="Laura Sánchez", rfc="SALA830624MDF", telefono="55-5001-3002", correo="laura.sanchez@contratista.mx"),
+    (dict(nombre="Víctor Castro", rfc="CAVI780815HDF", telefono="55-5001-3001", correo="victor.castro@contratista.mx"), "ICA S.A."),
+    (dict(nombre="Laura Sánchez", rfc="SALA830624MDF", telefono="55-5001-3002", correo="laura.sanchez@contratista.mx"), "Grupo Beta"),
 ]
 
 
@@ -41,10 +49,19 @@ class Command(BaseCommand):
     help = "Crea contratistas, personas y contratos de demo replicando lib/mock-data.ts del frontend."
 
     def handle(self, *args, **options):
-        contratistas = [self._get_or_create(Contratista, c) for c in CONTRATISTAS]
+        contratistas = {c["nombre"]: self._get_or_create(Contratista, c) for c in CONTRATISTAS}
+        empresas_sup = {e["nombre"]: self._get_or_create(EmpresaSupervision, e) for e in EMPRESAS_SUPERVISION}
         residentes = [self._get_or_create(Persona, p) for p in RESIDENTES]
-        supervisores = [self._get_or_create(Persona, p) for p in SUPERVISORES]
-        superintendentes = [self._get_or_create(Persona, p) for p in SUPERINTENDENTES]
+        supervisores = [
+            self._get_or_create_persona(datos, empresa_supervision=empresas_sup[empresa_nombre])
+            for datos, empresa_nombre in SUPERVISORES
+        ]
+        superintendentes = [
+            self._get_or_create_persona(datos, empresa_contratista=contratistas[contratista_nombre])
+            for datos, contratista_nombre in SUPERINTENDENTES
+        ]
+
+        contratistas = list(contratistas.values())
 
         contratos = [
             dict(
@@ -226,6 +243,23 @@ class Command(BaseCommand):
 
     def _get_or_create(self, model, data):
         obj, _ = model.objects.get_or_create(rfc=data["rfc"], defaults=data)
+        return obj
+
+    def _get_or_create_persona(self, data, empresa_contratista=None, empresa_supervision=None):
+        obj, created = Persona.objects.get_or_create(
+            rfc=data["rfc"],
+            defaults={**data, "empresa_contratista": empresa_contratista, "empresa_supervision": empresa_supervision},
+        )
+        if not created:
+            updated = False
+            if empresa_contratista and obj.empresa_contratista_id != empresa_contratista.id:
+                obj.empresa_contratista = empresa_contratista
+                updated = True
+            if empresa_supervision and obj.empresa_supervision_id != empresa_supervision.id:
+                obj.empresa_supervision = empresa_supervision
+                updated = True
+            if updated:
+                obj.save()
         return obj
 
     def _buscar_usuario(self, nombre_completo):

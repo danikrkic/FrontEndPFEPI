@@ -8,7 +8,7 @@
 
 import { useMemo } from "react"
 import { CheckCircle2, XCircle, AlertCircle } from "lucide-react"
-import type { Contract, Garantia, ProgramaObra } from "@/lib/types"
+import type { Anticipo, Contract, Garantia, ProgramaObra } from "@/lib/types"
 import { formatDate } from "@/lib/format"
 
 export interface CondicionActivacion {
@@ -24,20 +24,21 @@ export function useChecklist(
   contract: Contract,
   garantias: Garantia[],
   programasObra: ProgramaObra[],
+  anticipo?: Anticipo | null,
 ): CondicionActivacion[] {
   return useMemo(() => {
     const garantiasContrato = garantias.filter((g) => g.contratoId === contract.id)
     const garantiaCumplimiento = garantiasContrato.find(
       (g) => g.tipo === "cumplimiento" && g.status !== "vencida" && g.status !== "liberada",
     )
+    const garantiaAnticipo = garantiasContrato.find(
+      (g) => g.tipo === "anticipo" && g.status !== "vencida" && g.status !== "liberada",
+    )
     const programa = programasObra.find((p) => p.contratoId === contract.id)
-    const semanasCargadas = programa
-      ? new Set(programa.conceptos.flatMap((cp) => cp.semanas.map((s) => s.semana))).size
-      : 0
     const tienePrograma = (programa?.conceptos.length ?? 0) > 0
     const tieneContrato = contract.documentos.some((d) => d.bloque === "contrato")
     const tieneCatalogo = contract.catalogoConceptos.length > 0
-    const anticipo = garantiasContrato.find((g) => g.tipo === "anticipo")
+    const tieneAnticipo = anticipo != null
 
     return [
       {
@@ -81,18 +82,21 @@ export function useChecklist(
           : "Sin contrato digitalizado — súbelo en la pestaña Documentación",
       },
       {
-        id: "anticipo",
-        label: "Anticipo (si aplica)",
-        descripcion:
-          "Si el contrato contempla anticipo, debe estar registrado antes de activar",
-        cumplida: true, // Condicional — siempre verdadero para no bloquear si no aplica
-        obligatoria: false,
-        detalle: anticipo
-          ? `Garantía de anticipo registrada — póliza ${anticipo.numeroPoliza}`
-          : "Sin garantía de anticipo registrada. Si el contrato no contempla anticipo, esto no bloquea la activación.",
+        id: "garantia_anticipo",
+        label: tieneAnticipo ? "Garantía de anticipo" : "Anticipo (no aplica)",
+        descripcion: tieneAnticipo
+          ? "El contrato tiene anticipo registrado — se requiere garantía de anticipo vigente"
+          : "El contrato no tiene anticipo registrado",
+        cumplida: tieneAnticipo ? !!garantiaAnticipo : true,
+        obligatoria: tieneAnticipo,
+        detalle: tieneAnticipo
+          ? garantiaAnticipo
+            ? `Póliza ${garantiaAnticipo.numeroPoliza} · Vigente hasta ${formatDate(garantiaAnticipo.fechaVigencia)}`
+            : "Falta la garantía de anticipo — regístrala en la pestaña Garantías"
+          : "Sin anticipo registrado en este contrato",
       },
     ]
-  }, [contract, garantias, programasObra])
+  }, [contract, garantias, programasObra, anticipo])
 }
 
 export function ActivacionChecklist({

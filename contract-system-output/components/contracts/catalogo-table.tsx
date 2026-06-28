@@ -38,6 +38,7 @@ export interface ConceptoEjecutado {
   conceptoId: string
   cantidadEjecutada: number
   cantidadAcumulada: number
+  porcentajeAvance: number
 }
 
 export interface ConceptoConvenio {
@@ -138,6 +139,9 @@ export function CatalogoTable({
                   <TableHead className="text-xs text-right bg-green-50 dark:bg-green-950/30">
                     Acumulado
                   </TableHead>
+                  <TableHead className="text-xs text-right bg-green-50 dark:bg-green-950/30">
+                    % Avance
+                  </TableHead>
                 </>
               )}
               {modo.tipo === "convenio" && (
@@ -187,6 +191,9 @@ export function CatalogoTable({
                       <TableCell className="text-xs text-right tabular-nums bg-green-50/50 dark:bg-green-950/20">
                         {ejec ? ejec.cantidadAcumulada.toLocaleString("es-MX") : "—"}
                       </TableCell>
+                      <TableCell className="text-xs text-right tabular-nums bg-green-50/50 dark:bg-green-950/20">
+                        {ejec ? `${ejec.porcentajeAvance}%` : "—"}
+                      </TableCell>
                     </>
                   )}
                   {/* Columna convenio */}
@@ -230,7 +237,7 @@ export function CatalogoTable({
                 {formatCurrency(totalVisible)}
               </TableCell>
               {modo.tipo === "programa" && <TableCell />}
-              {modo.tipo === "generadores" && <><TableCell /><TableCell /></>}
+              {modo.tipo === "generadores" && <><TableCell /><TableCell /><TableCell /></>}
               {modo.tipo === "convenio" && <TableCell />}
             </TableRow>
           </TableBody>

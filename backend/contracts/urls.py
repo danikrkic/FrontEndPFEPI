@@ -6,6 +6,7 @@ from .views import (
     ContractViewSet,
     ContratistaViewSet,
     ConvenioViewSet,
+    EmpresaSupervisionViewSet,
     EstimacionViewSet,
     GarantiaViewSet,
     IncumplimientoViewSet,
@@ -16,6 +17,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register("contratistas", ContratistaViewSet, basename="contratista")
+router.register("empresas-supervision", EmpresaSupervisionViewSet, basename="empresa-supervision")
 router.register("personas", PersonaViewSet, basename="persona")
 router.register("contratos", ContractViewSet, basename="contrato")
 router.register("estimaciones", EstimacionViewSet, basename="estimacion")

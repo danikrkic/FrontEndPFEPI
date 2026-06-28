@@ -1,5 +1,6 @@
 import type {
   Anticipo,
+  AvanceConcepto,
   AvanceDiario,
   AvanceTipo,
   Bitacora,
@@ -16,8 +17,10 @@ import type {
   ConvenioStatus,
   ConvenioTipo,
   DocBlock,
+  EmpresaSupervision,
   EstimacionStatus,
   Estimacion,
+  LineaEstimacion,
   AlertaStatus,
   Garantia,
   GarantiaStatus,
@@ -119,9 +122,13 @@ export async function loginRequest(email: string, password: string) {
 }
 
 export async function meRequest(): Promise<ApiUser | null> {
-  const res = await apiFetch("/auth/me/")
-  if (!res.ok) return null
-  return res.json()
+  try {
+    const res = await apiFetch("/auth/me/")
+    if (!res.ok) return null
+    return res.json()
+  } catch {
+    return null
+  }
 }
 
 // ── Errores de API ────────────────────────────────────────────────────────────
@@ -188,6 +195,14 @@ function apiPut<T>(path: string, body?: unknown): Promise<T> {
 
 // ── Tipos crudos de la API (snake_case, tal cual los serializa Django) ───────
 
+export interface ApiPersonaCompact {
+  id: number
+  nombre: string
+  rfc: string
+  telefono: string
+  correo: string
+}
+
 export interface ApiContratista {
   id: number
   nombre: string
@@ -195,6 +210,17 @@ export interface ApiContratista {
   representante: string
   telefono: string
   correo: string
+  superintendentes: ApiPersonaCompact[]
+}
+
+export interface ApiEmpresaSupervision {
+  id: number
+  nombre: string
+  rfc: string
+  representante: string
+  telefono: string
+  correo: string
+  supervisores: ApiPersonaCompact[]
 }
 
 export interface ApiPersona {
@@ -203,6 +229,8 @@ export interface ApiPersona {
   rfc: string
   telefono: string
   correo: string
+  empresa_contratista: number | null
+  empresa_supervision: number | null
 }
 
 export interface ApiConceptoCatalogo {
@@ -267,6 +295,8 @@ export interface ApiBitacoraNote {
   fecha: string
   firmas: ApiNotaFirma[]
   fotos: ApiBitacoraNoteFoto[]
+  conceptos?: Array<{ id: number; clave: string }>
+  nota_padre_numero?: number | null
 }
 
 export interface ApiBitacora {
@@ -293,6 +323,19 @@ export interface ApiOrdenPago {
   fecha_atencion: string | null
 }
 
+export interface ApiLineaEstimacion {
+  id: number
+  concepto_id: number
+  clave: string
+  descripcion: string
+  unidad: string
+  cantidad_contratada: string
+  cantidad_ejecutada: string
+  cantidad_acumulada: string
+  generador_detalle: string
+  porcentaje_avance: number
+}
+
 export interface ApiEstimacion {
   id: number
   contrato: ApiContractCompact
@@ -306,6 +349,7 @@ export interface ApiEstimacion {
   status: string
   observaciones: string
   creada_por: string | null
+  creada_por_id: number | null
   fecha_creacion: string
   importe_bruto: string
   amortizacion_anticipo: string
@@ -313,6 +357,9 @@ export interface ApiEstimacion {
   iva: string
   importe_neto: string
   orden_pago: ApiOrdenPago | null
+  lineas: ApiLineaEstimacion[]
+  conceptos_sugeridos_terminados?: Array<{ id: number; clave: string }>
+  advertencia_avance?: string
 }
 
 export interface ApiGarantia {
@@ -414,19 +461,28 @@ export interface ApiMinuta {
   fecha: string
 }
 
-export interface ApiSemanaConcepto {
-  semana: number
+export interface ApiMesConcepto {
+  mes: number
   cantidad: string | number
 }
 
 export interface ApiConceptoPrograma {
   concepto_id: number
-  semanas: ApiSemanaConcepto[]
+  meses: ApiMesConcepto[]
 }
 
 export interface ApiProgramaObra {
   conceptos: ApiConceptoPrograma[]
   updated_at: string | null
+}
+
+export interface ApiAcumuladoConvenios {
+  monto_adicional_acumulado: number
+  dias_adicionales_acumulados: number
+  porcentaje_monto: number
+  porcentaje_dias: number
+  alerta_monto: boolean
+  alerta_dias: boolean
 }
 
 export interface ApiContract {
@@ -435,7 +491,9 @@ export interface ApiContract {
   objeto: string
   descripcion: string
   monto: string
+  monto_original: string | null
   plazo_dias: number
+  plazo_dias_original: number | null
   fecha_inicio: string
   fecha_termino: string
   ubicacion: string
@@ -461,6 +519,7 @@ export interface ApiContract {
   incumplimientos: ApiIncumplimiento[]
   minutas: ApiMinuta[]
   programa_obra: ApiProgramaObra | null
+  acumulado_convenios?: ApiAcumuladoConvenios
 }
 
 // ── Adaptadores snake_case (Django) → camelCase (frontend) ──────────────────
@@ -474,12 +533,44 @@ function strId(v: number | string): string {
   return String(v)
 }
 
+function toPersonaCompact(a: ApiPersonaCompact): Persona {
+  return { id: strId(a.id), nombre: a.nombre, rfc: a.rfc, telefono: a.telefono, correo: a.correo }
+}
+
 export function toContratista(a: ApiContratista): Contratista {
-  return { id: strId(a.id), nombre: a.nombre, rfc: a.rfc, representante: a.representante, telefono: a.telefono, correo: a.correo }
+  return {
+    id: strId(a.id),
+    nombre: a.nombre,
+    rfc: a.rfc,
+    representante: a.representante,
+    telefono: a.telefono,
+    correo: a.correo,
+    superintendentes: a.superintendentes.map(toPersonaCompact),
+  }
+}
+
+export function toEmpresaSupervision(a: ApiEmpresaSupervision): EmpresaSupervision {
+  return {
+    id: strId(a.id),
+    nombre: a.nombre,
+    rfc: a.rfc,
+    representante: a.representante,
+    telefono: a.telefono,
+    correo: a.correo,
+    supervisores: a.supervisores.map(toPersonaCompact),
+  }
 }
 
 export function toPersona(a: ApiPersona): Persona {
-  return { id: strId(a.id), nombre: a.nombre, rfc: a.rfc, telefono: a.telefono, correo: a.correo }
+  return {
+    id: strId(a.id),
+    nombre: a.nombre,
+    rfc: a.rfc,
+    telefono: a.telefono,
+    correo: a.correo,
+    empresaContratista: a.empresa_contratista != null ? strId(a.empresa_contratista) : null,
+    empresaSupervision: a.empresa_supervision != null ? strId(a.empresa_supervision) : null,
+  }
 }
 
 export function toContractDocument(a: ApiContractDocument): ContractDocument {
@@ -542,6 +633,8 @@ export function toBitacoraNote(a: ApiBitacoraNote): BitacoraNote {
     fecha: a.fecha,
     firmas: a.firmas,
     fotos: a.fotos.map((f) => f.imagen),
+    conceptos: (a.conceptos ?? []).map((c) => ({ id: strId(c.id), clave: c.clave })),
+    notaPadreNumero: a.nota_padre_numero ?? null,
   }
 }
 
@@ -570,6 +663,21 @@ export function toOrdenPago(a: ApiOrdenPago): OrdenPago {
   }
 }
 
+function toLineaEstimacion(a: ApiLineaEstimacion): LineaEstimacion {
+  return {
+    id: strId(a.id),
+    conceptoId: strId(a.concepto_id),
+    clave: a.clave,
+    descripcion: a.descripcion,
+    unidad: a.unidad,
+    cantidadContratada: num(a.cantidad_contratada),
+    cantidadEjecutada: num(a.cantidad_ejecutada),
+    cantidadAcumulada: num(a.cantidad_acumulada),
+    generadorDetalle: a.generador_detalle,
+    porcentajeAvance: a.porcentaje_avance,
+  }
+}
+
 export function toEstimacion(a: ApiEstimacion): Estimacion {
   return {
     id: strId(a.id),
@@ -584,13 +692,44 @@ export function toEstimacion(a: ApiEstimacion): Estimacion {
     status: a.status as EstimacionStatus,
     observaciones: a.observaciones,
     creadaPor: a.creada_por ?? "",
+    creadaPorId: a.creada_por_id != null ? String(a.creada_por_id) : null,
     fechaCreacion: a.fecha_creacion,
     importeBruto: num(a.importe_bruto),
     amortizacionAnticipo: num(a.amortizacion_anticipo),
     retencionGarantia: num(a.retencion_garantia),
     iva: num(a.iva),
     importeNeto: num(a.importe_neto),
+    lineas: (a.lineas ?? []).map(toLineaEstimacion),
+    conceptosSugeridosTerminados: (a.conceptos_sugeridos_terminados ?? []).map((c) => ({
+      id: strId(c.id),
+      clave: c.clave,
+    })),
   }
+}
+
+export interface ApiAvanceConcepto {
+  concepto_id: number
+  clave: string
+  descripcion: string
+  unidad: string
+  cantidad_contratada: number
+  cantidad_acumulada: number
+  porcentaje_avance: number
+}
+
+export function fetchAvanceConceptos(contratoId: string): Promise<AvanceConcepto[]> {
+  return apiGet<ApiAvanceConcepto[]>(`/contracts/contratos/${contratoId}/avance-conceptos/`).then(
+    (list) =>
+      list.map((a) => ({
+        conceptoId: strId(a.concepto_id),
+        clave: a.clave,
+        descripcion: a.descripcion,
+        unidad: a.unidad,
+        cantidadContratada: a.cantidad_contratada,
+        cantidadAcumulada: a.cantidad_acumulada,
+        porcentajeAvance: a.porcentaje_avance,
+      })),
+  )
 }
 
 export function toGarantia(a: ApiGarantia): Garantia {
@@ -705,7 +844,7 @@ export function toProgramaObra(a: ApiProgramaObra | null, contratoId: string): P
     conceptos: a
       ? a.conceptos.map((c): ConceptoPrograma => ({
           conceptoId: strId(c.concepto_id),
-          semanas: c.semanas.map((s) => ({ semana: s.semana, cantidad: num(s.cantidad) })),
+          meses: c.meses.map((m) => ({ mes: m.mes, cantidad: num(m.cantidad) })),
         }))
       : [],
     updatedAt: a?.updated_at ?? "",
@@ -719,7 +858,9 @@ export function toContract(a: ApiContract): Contract {
     objeto: a.objeto,
     descripcion: a.descripcion,
     monto: num(a.monto),
+    montoOriginal: a.monto_original != null ? num(a.monto_original) : null,
     plazoDias: a.plazo_dias,
+    plazoDiasOriginal: a.plazo_dias_original ?? null,
     fechaInicio: a.fecha_inicio,
     fechaTermino: a.fecha_termino,
     ubicacion: a.ubicacion,
@@ -735,6 +876,16 @@ export function toContract(a: ApiContract): Contract {
     catalogoConceptos: a.catalogo_conceptos.map(toConceptoCatalogo),
     versiones: a.versiones.map(toContractVersion),
     fechaActivacion: a.fecha_activacion ?? undefined,
+    acumuladoConvenios: a.acumulado_convenios
+      ? {
+          montoAdicionalAcumulado: a.acumulado_convenios.monto_adicional_acumulado,
+          diasAdicionalesAcumulados: a.acumulado_convenios.dias_adicionales_acumulados,
+          porcentajeMonto: a.acumulado_convenios.porcentaje_monto,
+          porcentajeDias: a.acumulado_convenios.porcentaje_dias,
+          alertaMonto: a.acumulado_convenios.alerta_monto,
+          alertaDias: a.acumulado_convenios.alerta_dias,
+        }
+      : undefined,
   }
 }
 
@@ -778,15 +929,33 @@ export function fetchContratistas() {
   return apiGet<ApiContratista[]>("/contracts/contratistas/")
 }
 
-export function createContratistaRequest(payload: Omit<Contratista, "id">) {
+export function createContratistaRequest(payload: Omit<Contratista, "id" | "superintendentes">) {
   return apiPost<ApiContratista>("/contracts/contratistas/", payload)
 }
 
-export function fetchPersonas() {
-  return apiGet<ApiPersona[]>("/contracts/personas/")
+export function fetchEmpresasSupervision() {
+  return apiGet<ApiEmpresaSupervision[]>("/contracts/empresas-supervision/")
 }
 
-export function createPersonaRequest(payload: Omit<Persona, "id">) {
+export function createEmpresaSupervisionRequest(payload: Omit<EmpresaSupervision, "id" | "supervisores">) {
+  return apiPost<ApiEmpresaSupervision>("/contracts/empresas-supervision/", payload)
+}
+
+export function fetchPersonas(params?: { sin_empresa?: boolean }) {
+  const query = params?.sin_empresa ? "?sin_empresa=true" : ""
+  return apiGet<ApiPersona[]>(`/contracts/personas/${query}`)
+}
+
+export interface CreatePersonaPayload {
+  nombre: string
+  rfc: string
+  telefono: string
+  correo: string
+  empresa_contratista?: number | null
+  empresa_supervision?: number | null
+}
+
+export function createPersonaRequest(payload: CreatePersonaPayload) {
   return apiPost<ApiPersona>("/contracts/personas/", payload)
 }
 
@@ -807,12 +976,12 @@ export interface CreateContratoPayload {
   monto: number
   plazo_dias: number
   fecha_inicio: string
-  fecha_termino: string
   ubicacion: string
   contratista_id: string
   residente_id: string
   supervisor_id: string
   superintendente_id: string
+  empresa_supervision_id?: string | null
 }
 
 export function createContratoRequest(payload: CreateContratoPayload) {
@@ -838,11 +1007,37 @@ export function putCatalogoRequest(contratoId: string, conceptos: ConceptoCatalo
 
 export interface ConceptoProgramaPayload {
   concepto_id: number
-  semanas: { semana: number; cantidad: number }[]
+  meses: { mes: number; cantidad: number }[]
 }
 
 export function putProgramaObraRequest(contratoId: string, conceptos: ConceptoProgramaPayload[]) {
   return apiPut<ApiProgramaObra>(`/contracts/contratos/${contratoId}/programa-obra/`, conceptos)
+}
+
+export interface ApiConceptoMes {
+  mes: number
+  cantidad_programada: number
+  cantidad_ejecutada: number
+  cantidad_acumulada: number
+  terminado_este_mes: boolean
+}
+
+export interface ApiCalendarioConcepto {
+  concepto_id: number
+  clave: string
+  descripcion: string
+  unidad: string
+  cantidad_contratada: number
+  meses: ApiConceptoMes[]
+}
+
+export interface ApiCalendarioMensual {
+  meses: Array<{ mes: number; fecha_inicio: string | null; fecha_fin: string | null }>
+  conceptos: ApiCalendarioConcepto[]
+}
+
+export function fetchCalendarioMensual(contratoId: string) {
+  return apiGet<ApiCalendarioMensual>(`/contracts/contratos/${contratoId}/calendario-mensual/`)
 }
 
 export function solicitarActivacionRequest(contratoId: string) {
@@ -872,6 +1067,7 @@ export interface CreateEstimacionPayload {
   registro_fotografico: number
   notas_soporte: number
   importe_bruto: number
+  lineas?: Array<{ concepto_id: number; cantidad_ejecutada: number; generador_detalle?: string }>
 }
 
 export function createEstimacionRequest(payload: CreateEstimacionPayload) {

@@ -13,6 +13,7 @@ from .models import (
     Contratista,
     Convenio,
     ConvenioDocumento,
+    EmpresaSupervision,
     Estimacion,
     Garantia,
     Incumplimiento,
@@ -30,15 +31,40 @@ class ContratistaAdmin(admin.ModelAdmin):
     search_fields = ("nombre", "rfc")
 
 
+@admin.register(EmpresaSupervision)
+class EmpresaSupervisionAdmin(admin.ModelAdmin):
+    list_display = ("nombre", "rfc", "representante", "correo")
+    search_fields = ("nombre", "rfc")
+
+
 @admin.register(Persona)
 class PersonaAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "rfc", "correo")
+    list_display = ("nombre", "rfc", "correo", "empresa_contratista", "empresa_supervision")
     search_fields = ("nombre", "rfc")
+    list_filter = ("empresa_contratista", "empresa_supervision")
 
 
 class ConceptoCatalogoInline(admin.TabularInline):
     model = ConceptoCatalogo
     extra = 0
+
+    def _contrato_activo(self, obj):
+        return obj is not None and obj.status == Contract.Status.ACTIVO
+
+    def has_add_permission(self, request, obj=None):
+        if self._contrato_activo(obj):
+            return False
+        return super().has_add_permission(request, obj)
+
+    def has_change_permission(self, request, obj=None):
+        if self._contrato_activo(obj):
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        if self._contrato_activo(obj):
+            return False
+        return super().has_delete_permission(request, obj)
 
 
 class ContractDocumentInline(admin.TabularInline):

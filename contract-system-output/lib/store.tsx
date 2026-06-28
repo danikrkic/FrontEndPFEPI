@@ -19,6 +19,7 @@ import type {
   ConvenioConceptoAfectado,
   ConvenioTipo,
   DocBlock,
+  EmpresaSupervision,
   Estimacion,
   Garantia,
   GarantiaTipo,
@@ -43,6 +44,7 @@ import {
   createContratistaRequest,
   createContratoRequest,
   createConvenioRequest,
+  createEmpresaSupervisionRequest,
   createEstimacionRequest,
   createGarantiaRequest,
   createIncumplimientoRequest,
@@ -52,6 +54,7 @@ import {
   fetchContrato,
   fetchContratistas,
   fetchContratos,
+  fetchEmpresasSupervision,
   fetchPersonas,
   liberarGarantiaRequest,
   loginRequest,
@@ -63,6 +66,7 @@ import {
   revisarEstimacionRequest,
   solicitarActivacionRequest,
   toContratista,
+  toEmpresaSupervision,
   toOrdenPago,
   toPersona,
   uploadDocumentoRequest,
@@ -91,6 +95,7 @@ interface AppState {
 
   contracts: Contract[]
   contratistas: Contratista[]
+  empresasSupervision: EmpresaSupervision[]
   residentes: Persona[]
   supervisores: Persona[]
   superintendentes: Persona[]
@@ -112,16 +117,17 @@ interface AppState {
       "id" | "version" | "documentos" | "versiones" | "avanceProgramado" | "avanceReal" | "catalogoConceptos"
     >,
   ) => Promise<void>
-  addContratista: (c: Omit<Contratista, "id">) => Promise<Contratista>
-  addResidente: (p: Omit<Persona, "id">) => Promise<Persona>
-  addSupervisor: (p: Omit<Persona, "id">) => Promise<Persona>
-  addSuperintendente: (p: Omit<Persona, "id">) => Promise<Persona>
+  addContratista: (c: Omit<Contratista, "id" | "superintendentes">) => Promise<Contratista>
+  addEmpresaSupervision: (e: Omit<EmpresaSupervision, "id" | "supervisores">) => Promise<EmpresaSupervision>
+  addResidente: (p: Pick<Persona, "nombre" | "rfc" | "telefono" | "correo">) => Promise<Persona>
+  addSupervisor: (p: Pick<Persona, "nombre" | "rfc" | "telefono" | "correo">, empresaSupervisionId: string) => Promise<Persona>
+  addSuperintendente: (p: Pick<Persona, "nombre" | "rfc" | "telefono" | "correo">, empresaContratistaId: string) => Promise<Persona>
   addDocument: (contratoId: string, bloque: DocBlock, archivo: File) => Promise<void>
   setCatalogoConceptos: (contratoId: string, conceptos: ConceptoCatalogo[]) => Promise<void>
   openBitacora: (contratoId: string, notaApertura: string) => Promise<void>
   addNote: (
     contratoId: string,
-    note: { tipo: NoteType; contenido: string },
+    note: { tipo: NoteType; contenido: string; conceptos?: string[]; notaPadreId?: string | null },
     fotos?: File[],
   ) => Promise<void>
   addEstimacion: (e: {
@@ -133,8 +139,9 @@ interface AppState {
     registroFotografico: number
     notasSoporte: number
     importeBruto: number
-  }) => Promise<void>
-  reviewEstimacion: (id: string, status: "aceptada" | "rechazada", observaciones: string) => Promise<void>
+    lineas?: Array<{ conceptoId: string; cantidadEjecutada: number; generadorDetalle?: string }>
+  }) => Promise<{ conceptosSugeridosTerminados: Array<{ id: string; clave: string }> }>
+  reviewEstimacion: (id: string, status: "aceptada" | "rechazada", observaciones: string) => Promise<{ advertenciaAvance?: string }>
   addConvenio: (
     c: {
       contratoId: string
@@ -202,6 +209,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [contracts, setContracts] = useState<Contract[]>([])
   const [contratistas, setContratistas] = useState<Contratista[]>([])
+  const [empresasSupervision, setEmpresasSupervision] = useState<EmpresaSupervision[]>([])
   const [residentes, setResidentes] = useState<Persona[]>([])
   const [supervisores, setSupervisores] = useState<Persona[]>([])
   const [superintendentes, setSuperintendentes] = useState<Persona[]>([])
@@ -217,16 +225,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [anticipos, setAnticipos] = useState<Anticipo[]>([])
   const [solicitudesActivacion, setSolicitudesActivacion] = useState<SolicitudActivacion[]>([])
 
-  // El pool de Personas es único en el backend (una misma persona puede ser
-  // residente/supervisor/superintendente en distintos contratos); se expone
-  // triplicado para no romper las páginas que ya esperan tres listas.
   async function loadPersonasYContratistas() {
-    const [apiContratistas, apiPersonas] = await Promise.all([fetchContratistas(), fetchPersonas()])
-    setContratistas(apiContratistas.map(toContratista))
-    const personas = apiPersonas.map(toPersona)
-    setResidentes(personas)
-    setSupervisores(personas)
-    setSuperintendentes(personas)
+    const [resContratistas, resEmpresasSup, resResidentes] = await Promise.allSettled([
+      fetchContratistas(),
+      fetchEmpresasSupervision(),
+      fetchPersonas({ sin_empresa: true }),
+    ])
+    const apiContratistas = resContratistas.status === "fulfilled" ? resContratistas.value : []
+    const apiEmpresasSup = resEmpresasSup.status === "fulfilled" ? resEmpresasSup.value : []
+    const apiResidentes = resResidentes.status === "fulfilled" ? resResidentes.value : []
+
+    const mappedContratistas = apiContratistas.map(toContratista)
+    const mappedEmpresasSup = apiEmpresasSup.map(toEmpresaSupervision)
+    setContratistas(mappedContratistas)
+    setEmpresasSupervision(mappedEmpresasSup)
+    setResidentes(apiResidentes.map(toPersona))
+    setSupervisores(mappedEmpresasSup.flatMap((e) => e.supervisores))
+    setSuperintendentes(mappedContratistas.flatMap((c) => c.superintendentes))
   }
 
   function applyBundle(bundle: ContractBundle) {
@@ -308,6 +323,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clearTokens()
     setContracts([])
     setContratistas([])
+    setEmpresasSupervision([])
     setResidentes([])
     setSupervisores([])
     setSuperintendentes([])
@@ -332,12 +348,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       monto: c.monto,
       plazo_dias: c.plazoDias,
       fecha_inicio: c.fechaInicio,
-      fecha_termino: c.fechaTermino,
       ubicacion: c.ubicacion,
       contratista_id: c.contratista.id,
       residente_id: c.residente.id,
       supervisor_id: c.supervisor.id,
       superintendente_id: c.superintendente.id,
+      empresa_supervision_id: c.supervisor.empresaSupervision ?? null,
     })
     applyBundle(adaptContractBundle(api))
   }
@@ -349,18 +365,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return nuevo
   }
 
-  async function addPersona(p: Omit<Persona, "id">) {
-    const api = await createPersonaRequest(p)
-    const nueva = toPersona(api)
-    setResidentes((prev) => [...prev, nueva])
-    setSupervisores((prev) => [...prev, nueva])
-    setSuperintendentes((prev) => [...prev, nueva])
+  const addEmpresaSupervision: AppState["addEmpresaSupervision"] = async (e) => {
+    const api = await createEmpresaSupervisionRequest(e)
+    const nueva = toEmpresaSupervision(api)
+    setEmpresasSupervision((prev) => [...prev, nueva])
     return nueva
   }
 
-  const addResidente: AppState["addResidente"] = (p) => addPersona(p)
-  const addSupervisor: AppState["addSupervisor"] = (p) => addPersona(p)
-  const addSuperintendente: AppState["addSuperintendente"] = (p) => addPersona(p)
+  const addResidente: AppState["addResidente"] = async (p) => {
+    const api = await createPersonaRequest(p)
+    const nueva = toPersona(api)
+    setResidentes((prev) => [...prev, nueva])
+    return nueva
+  }
+
+  const addSupervisor: AppState["addSupervisor"] = async (p, empresaSupervisionId) => {
+    const api = await createPersonaRequest({ ...p, empresa_supervision: Number(empresaSupervisionId) })
+    const nueva = toPersona(api)
+    setEmpresasSupervision((prev) =>
+      prev.map((e) =>
+        e.id === empresaSupervisionId ? { ...e, supervisores: [...e.supervisores, nueva] } : e,
+      ),
+    )
+    setSupervisores((prev) => [...prev, nueva])
+    return nueva
+  }
+
+  const addSuperintendente: AppState["addSuperintendente"] = async (p, empresaContratistaId) => {
+    const api = await createPersonaRequest({ ...p, empresa_contratista: Number(empresaContratistaId) })
+    const nueva = toPersona(api)
+    setContratistas((prev) =>
+      prev.map((c) =>
+        c.id === empresaContratistaId ? { ...c, superintendentes: [...c.superintendentes, nueva] } : c,
+      ),
+    )
+    setSuperintendentes((prev) => [...prev, nueva])
+    return nueva
+  }
 
   const addDocument: AppState["addDocument"] = async (contratoId, bloque, archivo) => {
     const formData = new FormData()
@@ -395,6 +436,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const formData = new FormData()
     formData.append("tipo", note.tipo)
     formData.append("contenido", note.contenido)
+    for (const conceptoId of note.conceptos ?? []) {
+      formData.append("conceptos", conceptoId)
+    }
+    if (note.notaPadreId != null) {
+      formData.append("nota_padre", note.notaPadreId)
+    }
     for (const foto of fotos ?? []) {
       formData.append("fotos", foto)
     }
@@ -403,7 +450,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   const addEstimacion: AppState["addEstimacion"] = async (e) => {
-    await createEstimacionRequest({
+    const resp = await createEstimacionRequest({
       contrato_id: e.contratoId,
       periodo_inicio: e.periodoInicio,
       periodo_fin: e.periodoFin,
@@ -412,14 +459,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       registro_fotografico: e.registroFotografico,
       notas_soporte: e.notasSoporte,
       importe_bruto: e.importeBruto,
+      lineas: e.lineas?.map((l) => ({
+        concepto_id: parseInt(l.conceptoId),
+        cantidad_ejecutada: l.cantidadEjecutada,
+        generador_detalle: l.generadorDetalle,
+      })),
     })
     await refreshContrato(e.contratoId)
+    return {
+      conceptosSugeridosTerminados: (resp.conceptos_sugeridos_terminados ?? []).map((c) => ({
+        id: String(c.id),
+        clave: c.clave,
+      })),
+    }
   }
 
   const reviewEstimacion: AppState["reviewEstimacion"] = async (id, status, observaciones) => {
     const estimacion = estimaciones.find((e) => e.id === id)
-    await revisarEstimacionRequest(id, status, observaciones)
+    const resp = await revisarEstimacionRequest(id, status, observaciones)
     if (estimacion) await refreshContrato(estimacion.contratoId)
+    return { advertenciaAvance: (resp as Record<string, unknown>).advertencia_avance as string | undefined }
   }
 
   const addConvenio: AppState["addConvenio"] = async (c, archivos) => {
@@ -513,7 +572,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       contratoId,
       conceptos.map((c) => ({
         concepto_id: Number(c.conceptoId),
-        semanas: c.semanas.map((s) => ({ semana: s.semana, cantidad: s.cantidad })),
+        meses: c.meses.map((m) => ({ mes: m.mes, cantidad: m.cantidad })),
       })),
     )
     await refreshContrato(contratoId)
@@ -572,6 +631,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     logout,
     contracts,
     contratistas,
+    empresasSupervision,
     residentes,
     supervisores,
     superintendentes,
@@ -588,6 +648,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     solicitudesActivacion,
     addContract,
     addContratista,
+    addEmpresaSupervision,
     addResidente,
     addSupervisor,
     addSuperintendente,

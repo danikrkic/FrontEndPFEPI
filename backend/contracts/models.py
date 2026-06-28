@@ -18,11 +18,40 @@ class Contratista(models.Model):
         return self.nombre
 
 
+class EmpresaSupervision(models.Model):
+    nombre = models.CharField(max_length=200)
+    rfc = models.CharField(max_length=20)
+    representante = models.CharField(max_length=200)
+    telefono = models.CharField(max_length=30)
+    correo = models.EmailField()
+
+    class Meta:
+        verbose_name = "empresa de supervisión"
+        verbose_name_plural = "empresas de supervisión"
+
+    def __str__(self):
+        return self.nombre
+
+
 class Persona(models.Model):
     nombre = models.CharField(max_length=200)
     rfc = models.CharField(max_length=20)
     telefono = models.CharField(max_length=30)
     correo = models.EmailField()
+    empresa_contratista = models.ForeignKey(
+        Contratista,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="superintendentes",
+    )
+    empresa_supervision = models.ForeignKey(
+        EmpresaSupervision,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supervisores",
+    )
 
     class Meta:
         verbose_name_plural = "personas"
@@ -57,6 +86,21 @@ class Contract(models.Model):
     avance_programado = models.PositiveSmallIntegerField(default=0)
     avance_real = models.PositiveSmallIntegerField(default=0)
     fecha_activacion = models.DateField(null=True, blank=True)
+    monto_original = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+        help_text="Monto contractual original. Se fija al crear y no cambia con convenios.",
+    )
+    plazo_dias_original = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Plazo en días original. Se fija al crear y no cambia con convenios.",
+    )
+    empresa_supervision = models.ForeignKey(
+        EmpresaSupervision,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contratos_supervisados",
+    )
 
     def __str__(self):
         return self.no_contrato
@@ -211,10 +255,11 @@ class BitacoraNote(models.Model):
         RESPUESTA = "respuesta", "Respuesta"
         ACUERDO = "acuerdo", "Acuerdo"
         OBSERVACION = "observacion", "Observación"
+        CONCEPTO_TERMINADO = "concepto_terminado", "Concepto Terminado"
 
     bitacora = models.ForeignKey(Bitacora, on_delete=models.CASCADE, related_name="notas")
     numero = models.PositiveIntegerField()
-    tipo = models.CharField(max_length=20, choices=Tipo.choices)
+    tipo = models.CharField(max_length=30, choices=Tipo.choices)
     contenido = models.TextField()
     autor = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="notas_bitacora"
@@ -222,6 +267,10 @@ class BitacoraNote(models.Model):
     rol = models.CharField(max_length=20, choices=Role.choices)
     fecha = models.DateField()
     firmas = models.JSONField(default=list)
+    nota_padre = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="respuestas"
+    )
+    conceptos = models.ManyToManyField(ConceptoCatalogo, blank=True, related_name="notas_terminacion")
 
     class Meta:
         ordering = ["numero"]
@@ -300,6 +349,7 @@ class Estimacion(models.Model):
     retencion_garantia = models.DecimalField(max_digits=14, decimal_places=2, editable=False, default=0)
     iva = models.DecimalField(max_digits=14, decimal_places=2, editable=False, default=0)
     importe_neto = models.DecimalField(max_digits=14, decimal_places=2, editable=False, default=0)
+    notas_soporte_bitacora = models.ManyToManyField(BitacoraNote, blank=True, related_name="estimaciones_soporte")
 
     class Meta:
         ordering = ["contrato", "numero"]
@@ -322,6 +372,83 @@ class OrdenPago(models.Model):
 
     def __str__(self):
         return f"Orden de pago - {self.contrato.no_contrato} est.{self.estimacion.numero}"
+
+
+class LineaEstimacion(models.Model):
+    estimacion = models.ForeignKey(Estimacion, on_delete=models.CASCADE, related_name="lineas")
+    concepto = models.ForeignKey(ConceptoCatalogo, on_delete=models.PROTECT, related_name="lineas_estimacion")
+    cantidad_ejecutada = models.DecimalField(max_digits=14, decimal_places=2)
+    cantidad_acumulada = models.DecimalField(max_digits=14, decimal_places=2, editable=False)
+    generador_detalle = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = [["estimacion", "concepto"]]
+
+    def __str__(self):
+        return f"Línea {self.concepto.clave} - {self.estimacion}"
+
+
+def validar_convenio_pendiente_unico(contrato):
+    """Bloquea si ya hay un convenio en revisión para el contrato."""
+    if contrato.convenios.filter(status=Convenio.Status.PENDIENTE).exists():
+        raise Exception("Ya existe un convenio en revisión para este contrato.")
+
+
+def calcular_acumulado_convenios(contrato, umbral_monto=Decimal("0.25"), umbral_dias=Decimal("0.25")):
+    """Calcula el acumulado de monto y plazo adicional de convenios aprobados.
+    Retorna un dict con porcentajes y flags de alerta."""
+    aprobados = list(contrato.convenios.filter(status=Convenio.Status.APROBADO))
+    monto_original = contrato.monto_original or contrato.monto
+    plazo_original = contrato.plazo_dias_original or contrato.plazo_dias
+
+    monto_adicional = sum(Decimal(str(c.monto_adicional)) for c in aprobados)
+    dias_adicionales = sum(c.dias_adicionales for c in aprobados)
+
+    pct_monto = monto_adicional / monto_original if monto_original else Decimal("0")
+    pct_dias = Decimal(str(dias_adicionales)) / Decimal(str(plazo_original)) if plazo_original else Decimal("0")
+
+    return {
+        "monto_adicional_acumulado": float(monto_adicional),
+        "dias_adicionales_acumulados": dias_adicionales,
+        "porcentaje_monto": float(pct_monto),
+        "porcentaje_dias": float(pct_dias),
+        "alerta_monto": pct_monto >= umbral_monto,
+        "alerta_dias": pct_dias >= umbral_dias,
+    }
+
+
+def validar_garantias_para_activacion(contrato):
+    """Devuelve la lista de tipos de garantía requeridos pero faltantes/vencidos/liberados.
+    Lista vacía significa que el contrato está listo para activarse."""
+    hoy = date.today()
+    requeridas = [Garantia.Tipo.CUMPLIMIENTO]
+    try:
+        _ = contrato.anticipo  # OneToOneField — lanza RelatedObjectDoesNotExist si no existe
+        requeridas.append(Garantia.Tipo.ANTICIPO)
+    except Exception:
+        pass
+    vigentes = set(
+        contrato.garantias.filter(
+            fecha_vigencia__gte=hoy,
+            liberada_por__isnull=True,
+        ).values_list("tipo", flat=True)
+    )
+    return [t for t in requeridas if t not in vigentes]
+
+
+def calcular_mes_de_semana(numero_semana: int) -> int:
+    """Devuelve el número de mes de obra (1-based) para una semana dada.
+    Se usa un mes de obra de exactamente 4 semanas desde el inicio del contrato."""
+    return ((numero_semana - 1) // 4) + 1
+
+
+def sugerir_notas_concepto_terminado(estimacion):
+    """Devuelve los conceptos cuya cantidad acumulada (aceptada + esta estimación) alcanzó el 100%."""
+    return [
+        linea.concepto
+        for linea in estimacion.lineas.all()
+        if linea.cantidad_acumulada >= linea.concepto.cantidad and linea.concepto.cantidad > 0
+    ]
 
 
 def calcular_garantia_status(fecha_vigencia):
@@ -381,6 +508,19 @@ class Anticipo(models.Model):
     garantia = models.ForeignKey(
         Garantia, on_delete=models.SET_NULL, null=True, blank=True, related_name="anticipos"
     )
+
+    def clean(self):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        errors = {}
+        if self.garantia_id and self.garantia and self.garantia.monto != self.monto_otorgado:
+            errors["garantia"] = (
+                "El monto de la garantía de anticipo debe coincidir con el monto otorgado "
+                f"({self.monto_otorgado})."
+            )
+        if self.porcentaje_contrato is not None and self.porcentaje_contrato > 50:
+            errors["porcentaje_contrato"] = "El anticipo no puede exceder el 50% del monto contratado."
+        if errors:
+            raise DjangoValidationError(errors)
 
     def save(self, *args, **kwargs):
         if self._state.adding:
@@ -507,6 +647,68 @@ class Minuta(models.Model):
 
     def __str__(self):
         return f"Minuta - {self.titulo} ({self.contrato.no_contrato})"
+
+
+# ── Reglas de negocio: avance ─────────────────────────────────────────────────
+
+UMBRAL_ATRASO_PP = 10  # puntos porcentuales de desfase para disparar alerta
+
+
+def calcular_avance_real_contrato(contrato) -> float:
+    """% de avance real = suma de importe_bruto de estimaciones aceptadas / monto contrato."""
+    from django.db.models import Sum as _Sum
+
+    total_bruto = (
+        Estimacion.objects.filter(
+            contrato=contrato,
+            status=Estimacion.Status.ACEPTADA,
+        ).aggregate(total=_Sum("importe_bruto"))["total"]
+    ) or Decimal("0")
+
+    if not contrato.monto:
+        return 0.0
+    return round(float(total_bruto / contrato.monto * 100), 1)
+
+
+def calcular_avance_programado_contrato(contrato, fecha_referencia=None) -> float | None:
+    """% de avance programado acumulado hasta `fecha_referencia` según el ProgramaObra.
+
+    Devuelve None si no hay programa registrado o el contrato no tiene fechas.
+    """
+    if fecha_referencia is None:
+        fecha_referencia = date.today()
+
+    programa = getattr(contrato, "programa_obra", None)
+    if not programa or not programa.conceptos:
+        return None
+
+    if not contrato.fecha_inicio:
+        return None
+
+    diff_dias = (fecha_referencia - contrato.fecha_inicio).days
+    if diff_dias < 0:
+        return 0.0
+    # mes de obra actual (1-based, ceil)
+    mes_actual = max(1, -(-diff_dias // 30))
+
+    conceptos_dict = {c.id: c for c in contrato.catalogo_conceptos.all()}
+    total_programado_a_fecha = Decimal("0")
+    total_contratado = Decimal("0")
+
+    for cp in programa.conceptos:
+        concepto = conceptos_dict.get(int(cp.get("concepto_id", 0)))
+        if not concepto:
+            continue
+        precio = concepto.precio_unitario
+        total_contratado += concepto.cantidad * precio
+        for mm in cp.get("meses", []):
+            if int(mm["mes"]) <= mes_actual:
+                total_programado_a_fecha += Decimal(str(mm["cantidad"])) * precio
+
+    if not total_contratado:
+        return None
+
+    return round(float(total_programado_a_fecha / total_contratado * 100), 1)
 
 
 class ProgramaObra(models.Model):

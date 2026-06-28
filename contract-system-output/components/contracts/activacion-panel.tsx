@@ -41,13 +41,15 @@ export function ActivacionPanel({ contract }: { contract: Contract }) {
   const {
     user,
     garantias,
+    anticipos,
     programasObra,
     solicitudesActivacion,
     requestActivation,
     reviewActivation,
   } = useApp()
 
-  const checklist = useChecklist(contract, garantias, programasObra)
+  const anticipo = anticipos.find((a) => a.contratoId === contract.id) ?? null
+  const checklist = useChecklist(contract, garantias, programasObra, anticipo)
   const obligatoriasOk = checklist.filter((c) => c.obligatoria).every((c) => c.cumplida)
 
   const solicitud = solicitudesActivacion.find((s) => s.contratoId === contract.id) ?? null

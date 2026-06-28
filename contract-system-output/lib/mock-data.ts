@@ -22,6 +22,7 @@ export const CONTRATISTAS: Contratista[] = [
     representante: "Roberto Salinas",
     telefono: "55-1234-5678",
     correo: "contacto@ica.mx",
+    superintendentes: [],
   },
   {
     id: "ct2",
@@ -30,6 +31,7 @@ export const CONTRATISTAS: Contratista[] = [
     representante: "Laura Méndez",
     telefono: "55-9876-5432",
     correo: "proyectos@grupobeta.mx",
+    superintendentes: [],
   },
   {
     id: "ct3",
@@ -38,6 +40,7 @@ export const CONTRATISTAS: Contratista[] = [
     representante: "Jorge Vega",
     telefono: "55-4455-6677",
     correo: "obras@electramx.mx",
+    superintendentes: [],
   },
   {
     id: "ct4",
@@ -46,6 +49,7 @@ export const CONTRATISTAS: Contratista[] = [
     representante: "Sofía Herrera",
     telefono: "55-2233-4455",
     correo: "contacto@viasdelnorte.mx",
+    superintendentes: [],
   },
 ]
 
@@ -204,7 +208,9 @@ export const CONTRACTS: Contract[] = [
     descripcion:
       "Construcción de la Terminal 2 incluyendo áreas de abordaje, salas de espera y conexiones.",
     monto: 1200000,
+    montoOriginal: 1200000,
     plazoDias: 365,
+    plazoDiasOriginal: 365,
     fechaInicio: "2024-01-15",
     fechaTermino: "2025-01-14",
     ubicacion: "Zona Federal Aeroportuaria, Estado de México",
@@ -290,7 +296,9 @@ export const CONTRACTS: Contract[] = [
     objeto: "Remodelación Sala B - Modernización de espacios",
     descripcion: "Modernización integral de la Sala B de última espera.",
     monto: 450000,
+    montoOriginal: 450000,
     plazoDias: 180,
+    plazoDiasOriginal: 180,
     fechaInicio: "2024-03-01",
     fechaTermino: "2024-08-28",
     ubicacion: "Terminal 1, Sala B",
@@ -345,7 +353,9 @@ export const CONTRACTS: Contract[] = [
     objeto: "Sistema eléctrico - Actualización de infraestructura",
     descripcion: "Actualización de subestaciones y tableros eléctricos.",
     monto: 820000,
+    montoOriginal: 820000,
     plazoDias: 240,
+    plazoDiasOriginal: 240,
     fechaInicio: "2024-05-01",
     fechaTermino: "2024-12-27",
     ubicacion: "Subestación Central",
@@ -384,7 +394,9 @@ export const CONTRACTS: Contract[] = [
     objeto: "Pavimentación accesos - Rehabilitación de vialidades",
     descripcion: "Rehabilitación de vialidades y accesos vehiculares.",
     monto: 310000,
+    montoOriginal: 310000,
     plazoDias: 120,
+    plazoDiasOriginal: 120,
     fechaInicio: "2024-02-10",
     fechaTermino: "2024-06-09",
     ubicacion: "Accesos Norte y Sur",
@@ -450,6 +462,7 @@ export const BITACORAS: Bitacora[] = [
           { responsable: "Superintendente", nombre: "Víctor Castro", firma: "V. Castro" },
           { responsable: "Supervisión", nombre: "Arturo Mendoza", firma: "A. Mendoza" },
         ],
+        fotos: [],
       },
       {
         id: "bn2",
@@ -465,6 +478,7 @@ export const BITACORAS: Bitacora[] = [
           { responsable: "Residente de Obra", nombre: "Diego Ramírez", firma: "D. Ramírez" },
           { responsable: "Supervisión", nombre: "Arturo Mendoza", firma: "A. Mendoza" },
         ],
+        fotos: [],
       },
       {
         id: "bn3",
@@ -480,6 +494,7 @@ export const BITACORAS: Bitacora[] = [
           { responsable: "Residente de Obra", nombre: "Diego Ramírez", firma: "D. Ramírez" },
           { responsable: "Superintendente", nombre: "Víctor Castro", firma: "V. Castro" },
         ],
+        fotos: [],
       },
     ],
   },
@@ -504,6 +519,7 @@ export const BITACORAS: Bitacora[] = [
           { responsable: "Superintendente", nombre: "Laura Sánchez", firma: "L. Sánchez" },
           { responsable: "Supervisión", nombre: "Patricia Núñez", firma: "P. Núñez" },
         ],
+        fotos: [],
       },
     ],
   },
@@ -526,9 +542,9 @@ export const ESTIMACIONES: Estimacion[] = [
     periodoInicio: "2024-01-15",
     periodoFin: "2024-02-15",
     importeBruto: 180000,
-    amortizacionAnticipo: 9000,   // 5% del bruto (anticipo 20% del contrato, amort 5%)
-    retencionGarantia: 9000,       // 5%
-    iva: 25920,                    // (180000-9000-9000)*0.16
+    amortizacionAnticipo: 9000,
+    retencionGarantia: 9000,
+    iva: 25920,
     importeNeto: 187920,
     caratula: "Estimación 1 - Trabajos de cimentación",
     numerosGeneradores: "Volúmenes de excavación y concreto f'c=250",
@@ -537,7 +553,9 @@ export const ESTIMACIONES: Estimacion[] = [
     status: "aceptada",
     observaciones: "Revisada y validada sin observaciones.",
     creadaPor: "Víctor Castro",
+    creadaPorId: null,
     fechaCreacion: "2024-02-16",
+    lineas: [],
   },
   {
     id: "e2",
@@ -557,7 +575,9 @@ export const ESTIMACIONES: Estimacion[] = [
     status: "aceptada",
     observaciones: "Aprobada.",
     creadaPor: "Víctor Castro",
+    creadaPorId: null,
     fechaCreacion: "2024-03-16",
+    lineas: [],
   },
   {
     id: "e3",
@@ -577,7 +597,9 @@ export const ESTIMACIONES: Estimacion[] = [
     status: "en_revision",
     observaciones: "",
     creadaPor: "Víctor Castro",
+    creadaPorId: null,
     fechaCreacion: "2024-04-16",
+    lineas: [],
   },
   {
     id: "e4",
@@ -597,7 +619,9 @@ export const ESTIMACIONES: Estimacion[] = [
     status: "aceptada",
     observaciones: "Aprobada.",
     creadaPor: "Víctor Castro",
+    creadaPorId: null,
     fechaCreacion: "2024-03-11",
+    lineas: [],
   },
 ]
 

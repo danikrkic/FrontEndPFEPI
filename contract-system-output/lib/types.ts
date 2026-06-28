@@ -46,6 +46,17 @@ export interface Contratista {
   representante: string
   telefono: string
   correo: string
+  superintendentes: Persona[]
+}
+
+export interface EmpresaSupervision {
+  id: string
+  nombre: string
+  rfc: string
+  representante: string
+  telefono: string
+  correo: string
+  supervisores: Persona[]
 }
 
 export interface Persona {
@@ -54,6 +65,8 @@ export interface Persona {
   rfc: string
   telefono: string
   correo: string
+  empresaContratista?: string | null
+  empresaSupervision?: string | null
 }
 
 export interface ContractDocument {
@@ -101,13 +114,24 @@ export interface ContractVersion {
   catalogoConceptos?: ConceptoCatalogo[]
 }
 
+export interface AcumuladoConvenios {
+  montoAdicionalAcumulado: number
+  diasAdicionalesAcumulados: number
+  porcentajeMonto: number
+  porcentajeDias: number
+  alertaMonto: boolean
+  alertaDias: boolean
+}
+
 export interface Contract {
   id: string
   noContrato: string
   objeto: string
   descripcion: string
   monto: number
+  montoOriginal: number | null
   plazoDias: number
+  plazoDiasOriginal: number | null
   fechaInicio: string
   fechaTermino: string
   ubicacion: string
@@ -124,15 +148,17 @@ export interface Contract {
   versiones: ContractVersion[]
   /** Fecha en que el contrato fue activado (ISO date) */
   fechaActivacion?: string
+  acumuladoConvenios?: AcumuladoConvenios
 }
 
-export type NoteType = "instruccion" | "respuesta" | "acuerdo" | "observacion"
+export type NoteType = "instruccion" | "respuesta" | "acuerdo" | "observacion" | "concepto_terminado"
 
 export const NOTE_TYPE_LABELS: Record<NoteType, string> = {
   instruccion: "Instrucción",
   respuesta: "Respuesta",
   acuerdo: "Acuerdo",
   observacion: "Observación",
+  concepto_terminado: "Concepto Terminado",
 }
 
 export interface NotaFirma {
@@ -151,6 +177,8 @@ export interface BitacoraNote {
   fecha: string
   firmas: NotaFirma[]
   fotos: string[]
+  conceptos?: Array<{ id: string; clave: string }>
+  notaPadreNumero?: number | null
 }
 
 export interface Bitacora {
@@ -162,6 +190,57 @@ export interface Bitacora {
 }
 
 export type EstimacionStatus = "en_revision" | "aceptada" | "rechazada"
+
+export interface LineaEstimacion {
+  id: string
+  conceptoId: string
+  clave: string
+  descripcion: string
+  unidad: string
+  cantidadContratada: number
+  cantidadEjecutada: number
+  cantidadAcumulada: number
+  generadorDetalle: string
+  porcentajeAvance: number
+}
+
+export interface AvanceConcepto {
+  conceptoId: string
+  clave: string
+  descripcion: string
+  unidad: string
+  cantidadContratada: number
+  cantidadAcumulada: number
+  porcentajeAvance: number
+}
+
+export interface MesObra {
+  mes: number
+  fechaInicio: string | null
+  fechaFin: string | null
+}
+
+export interface ConceptoMes {
+  mes: number
+  cantidadProgramada: number
+  cantidadEjecutada: number
+  cantidadAcumulada: number
+  terminadoEsteMes: boolean
+}
+
+export interface CalendarioConcepto {
+  conceptoId: string
+  clave: string
+  descripcion: string
+  unidad: string
+  cantidadContratada: number
+  meses: ConceptoMes[]
+}
+
+export interface CalendarioMensual {
+  meses: MesObra[]
+  conceptos: CalendarioConcepto[]
+}
 
 // ── Cambio 2: desglose financiero de Estimacion ──────────────────────────────
 export interface Estimacion {
@@ -177,6 +256,7 @@ export interface Estimacion {
   status: EstimacionStatus
   observaciones: string
   creadaPor: string
+  creadaPorId: string | null
   fechaCreacion: string
   // Desglose financiero (sustituye el campo plano "monto")
   importeBruto: number
@@ -184,6 +264,8 @@ export interface Estimacion {
   retencionGarantia: number
   iva: number
   importeNeto: number
+  lineas: LineaEstimacion[]
+  conceptosSugeridosTerminados?: Array<{ id: string; clave: string }>
 }
 
 // ── Cambio 2: Anticipo ────────────────────────────────────────────────────────
@@ -299,17 +381,17 @@ export interface Minuta {
 // ── Programa de Obra ─────────────────────────────────────────────────────────
 
 /**
- * Cantidad programada de un concepto para una semana determinada.
- * El monto se deriva automáticamente: cantidadSemana * precioUnitario del concepto.
+ * Cantidad programada de un concepto para un mes determinado.
+ * El monto se deriva automáticamente: cantidadMes * precioUnitario del concepto.
  */
-export interface SemanaConcepto {
-  semana: number    // 1-based index dentro del contrato
-  cantidad: number  // cantidad de unidades a ejecutar esa semana
+export interface MesConcepto {
+  mes: number       // 1-based index de mes dentro del contrato
+  cantidad: number  // cantidad de unidades a ejecutar ese mes
 }
 
 export interface ConceptoPrograma {
   conceptoId: string
-  semanas: SemanaConcepto[]
+  meses: MesConcepto[]
 }
 
 export interface ProgramaObra {

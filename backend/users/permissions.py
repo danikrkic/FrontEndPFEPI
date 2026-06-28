@@ -20,6 +20,11 @@ PERMISSION_MATRIX = {
 }
 
 
+PERMISOS_POR_TIPO_NOTA = {
+    "concepto_terminado": ["residente"],
+}
+
+
 def can(role: str | None, action: str) -> bool:
     if not role:
         return False

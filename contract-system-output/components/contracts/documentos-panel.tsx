@@ -90,6 +90,7 @@ export function DocumentosPanel({ contract }: { contract: Contract }) {
                       variant="ghost"
                       className="h-8 w-8 shrink-0"
                       aria-label={`Descargar ${d.nombre}`}
+                      nativeButton={false}
                       render={<a href={d.archivo} target="_blank" rel="noopener noreferrer" />}
                     >
                       <Download className="h-4 w-4" />

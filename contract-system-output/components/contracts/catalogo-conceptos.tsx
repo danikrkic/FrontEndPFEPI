@@ -41,7 +41,8 @@ function uid() {
 export function CatalogoConceptos({ contract }: { contract: Contract }) {
   const { user, setCatalogoConceptos } = useApp()
   const conceptos = contract.catalogoConceptos
-  const puedeEditar = can(user?.role, "detalle.registrar")
+  const tienePermiso = can(user?.role, "detalle.registrar")
+  const puedeEditar = tienePermiso && contract.status !== "activo"
 
   async function addConcepto(c: Omit<ConceptoCatalogo, "id" | "total">) {
     const nuevo: ConceptoCatalogo = {
@@ -76,12 +77,18 @@ export function CatalogoConceptos({ contract }: { contract: Contract }) {
           <Table2 className="h-5 w-5 text-primary" />
           <CardTitle className="text-base">Catálogo de Conceptos</CardTitle>
         </div>
-        {puedeEditar && (
-          <div className="flex items-center gap-2">
-            {/* Cambio 3: importar desde Excel */}
-            <CatalogoImportDialog contract={contract} />
-            <ConceptoDialog onAdd={addConcepto} />
-          </div>
+        {tienePermiso && (
+          contract.status === "activo" ? (
+            <p className="text-xs text-amber-700">
+              Catálogo inmutable. Use un convenio modificatorio para realizar cambios.
+            </p>
+          ) : (
+            <div className="flex items-center gap-2">
+              {/* Cambio 3: importar desde Excel */}
+              <CatalogoImportDialog contract={contract} />
+              <ConceptoDialog onAdd={addConcepto} />
+            </div>
+          )
         )}
       </CardHeader>
       <CardContent>

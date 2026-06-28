@@ -15,10 +15,12 @@
  */
 
 import { useMemo, useState } from "react"
-import { Check, GitBranch, Plus, X, History } from "lucide-react"
+import { AlertTriangle, Check, GitBranch, Plus, X, History } from "lucide-react"
 import { useApp, can } from "@/lib/store"
 import {
   CONVENIO_TIPO_LABELS,
+  type AcumuladoConvenios,
+  type Contract,
   type Convenio,
   type ConvenioTipo,
 } from "@/lib/types"
@@ -63,6 +65,12 @@ export default function ConveniosPage() {
     [convenios],
   )
 
+  // Contratos que tienen al menos un convenio registrado
+  const contratosConConvenio = useMemo(() => {
+    const idsConConvenio = new Set(convenios.map((cv) => cv.contratoId))
+    return contracts.filter((c) => idsConConvenio.has(c.id))
+  }, [contracts, convenios])
+
   return (
     <div>
       <PageHeader
@@ -70,6 +78,15 @@ export default function ConveniosPage() {
         subtitle="Gestión de modificaciones contractuales (Art. 59 y 60 LOPSRM)"
         action={can(user?.role, "convenio.crear") ? <NuevoConvenioDialog /> : null}
       />
+
+      {/* Punto I: Acumulado de convenios por contrato */}
+      {contratosConConvenio.length > 0 && (
+        <div className="mb-6 flex flex-col gap-2">
+          {contratosConConvenio.map((c) => (
+            <AcumuladoWidget key={c.id} contract={c} />
+          ))}
+        </div>
+      )}
 
       <Tabs defaultValue="pendientes">
         <TabsList className="mb-4">
@@ -130,6 +147,75 @@ export default function ConveniosPage() {
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+// ── AcumuladoWidget (Punto I) ─────────────────────────────────────────────────
+
+function AcumuladoBar({ pct, alerta }: { pct: number; alerta: boolean }) {
+  const pctClamped = Math.min(pct * 100, 100)
+  return (
+    <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+      <div
+        className={`h-full rounded-full transition-all ${alerta ? "bg-amber-500" : "bg-emerald-500"}`}
+        style={{ width: `${pctClamped}%` }}
+      />
+    </div>
+  )
+}
+
+function AcumuladoWidget({ contract }: { contract: Contract }) {
+  const acum: AcumuladoConvenios | undefined = contract.acumuladoConvenios
+  if (!acum) return null
+
+  const hayAlerta = acum.alertaMonto || acum.alertaDias
+
+  return (
+    <Card className={hayAlerta ? "border-amber-400 bg-amber-50/40" : ""}>
+      <CardContent className="py-3 px-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            {hayAlerta && <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />}
+            <span>{contract.noContrato}</span>
+            <span className="text-muted-foreground font-normal">— Acumulado de convenios</span>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* Monto */}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Monto acumulado</span>
+              <span className={acum.alertaMonto ? "text-amber-700 font-semibold" : ""}>
+                {(acum.porcentajeMonto * 100).toFixed(1)}%
+                {acum.alertaMonto && " — supera 25%"}
+              </span>
+            </div>
+            <AcumuladoBar pct={acum.porcentajeMonto} alerta={acum.alertaMonto} />
+            <p className="text-xs text-muted-foreground">
+              +{formatMoneyFull(acum.montoAdicionalAcumulado)} sobre{" "}
+              {contract.montoOriginal != null ? formatMoneyFull(contract.montoOriginal) : "monto original"}
+            </p>
+          </div>
+
+          {/* Plazo */}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Plazo acumulado</span>
+              <span className={acum.alertaDias ? "text-amber-700 font-semibold" : ""}>
+                {(acum.porcentajeDias * 100).toFixed(1)}%
+                {acum.alertaDias && " — supera 25%"}
+              </span>
+            </div>
+            <AcumuladoBar pct={acum.porcentajeDias} alerta={acum.alertaDias} />
+            <p className="text-xs text-muted-foreground">
+              +{acum.diasAdicionalesAcumulados} días sobre{" "}
+              {contract.plazoDiasOriginal != null ? `${contract.plazoDiasOriginal} días` : "plazo original"}
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
