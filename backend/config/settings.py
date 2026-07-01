@@ -9,11 +9,16 @@ from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = config("SECRET_KEY", default="django-insecure--75x)l20oo-m&rt4o5ubtvy9$p03)@3szgv$5w@9r!_#jr#3n+")
+SECRET_KEY = config("SECRET_KEY")
 
 DEBUG = config("DEBUG", default=True, cast=bool)
 
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+
+# Contraseña asignada a las cuentas que se auto-crean al registrar una Persona
+# con correo (ver contracts/views.py PersonaViewSet.create). Debe definirse en
+# el .env de cada entorno; no tiene valor por defecto en el código fuente.
+DEFAULT_USER_PASSWORD = config("DEFAULT_USER_PASSWORD")
 
 
 INSTALLED_APPS = [

@@ -432,7 +432,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   function notificarCuentaCreada(correo: string) {
     toast.success(`Cuenta de acceso creada`, {
-      description: `Usuario: ${correo} · Contraseña temporal: demo123`,
+      description: `Usuario: ${correo}. Comparte la contraseña temporal de acceso por un canal seguro.`,
       duration: 8000,
     })
   }

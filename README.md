@@ -35,7 +35,9 @@ cp backend/.env.example backend/.env
 cp contract-system-output/.env.local.example contract-system-output/.env.local
 ```
 
-> Los valores por defecto funcionan sin modificaciones para desarrollo local.
+> Los valores por defecto funcionan sin modificaciones para desarrollo local. `SECRET_KEY` y
+> `DEFAULT_USER_PASSWORD` son obligatorios (sin valor por defecto en el código) — si el `.env`
+> no los define, el backend no arranca.
 
 ### 3. Levantar los servicios
 
@@ -60,7 +62,7 @@ Al iniciar por primera vez, el backend ejecuta automáticamente:
 
 ## Usuarios de prueba
 
-Todos los usuarios usan la contraseña: **`demo123`**
+`seed_users` crea un usuario por rol con la contraseña definida en `DEFAULT_USER_PASSWORD` (ver `backend/.env`, no versionado). Solicita esa contraseña al equipo por un canal seguro.
 
 | Email | Rol | Permisos principales |
 |---|---|---|
@@ -138,6 +140,18 @@ docker compose exec backend python manage.py migrar_programa_obra
 # Recrear datos de demo desde cero
 docker compose down -v && docker compose up
 ```
+
+---
+
+## Antes de desplegar a producción
+
+El `.env` de desarrollo tiene valores de ejemplo que **no deben usarse tal cual** fuera de tu máquina:
+
+- `SECRET_KEY`: genera uno nuevo y único, por ejemplo con `python -c "import secrets; print(secrets.token_urlsafe(50))"`.
+- `DEFAULT_USER_PASSWORD`: cambia `demo123` por una contraseña real; compártela con el equipo por un canal seguro, no por chat ni la incluyas en el repo.
+- `DEBUG=False` y `ALLOWED_HOSTS`/`CORS_ALLOWED_ORIGINS` apuntando al dominio real.
+- `DB_PASSWORD`: usa la contraseña que te dé el proveedor de base de datos (Railway, etc.), no `fepi`.
+- Revisa que `backend/.env` y `contract-system-output/.env.local` sigan sin subirse al repo (`git status` no debe listarlos).
 
 ---
 

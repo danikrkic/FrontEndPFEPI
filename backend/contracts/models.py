@@ -463,6 +463,31 @@ def calcular_acumulado_convenios(contrato, umbral_monto=Decimal("0.25"), umbral_
     }
 
 
+def validar_tope_convenio(contrato, monto_adicional, dias_adicionales):
+    """Art. 59 LOPSRM: los convenios modificatorios, individual o acumuladamente,
+    no pueden exceder el 25% del monto o del plazo pactado originalmente."""
+    acumulado = calcular_acumulado_convenios(contrato)
+    monto_original = contrato.monto_original or contrato.monto
+    plazo_original = contrato.plazo_dias_original or contrato.plazo_dias
+
+    monto_propuesto = Decimal(str(acumulado["monto_adicional_acumulado"])) + Decimal(str(monto_adicional))
+    dias_propuesto = acumulado["dias_adicionales_acumulados"] + dias_adicionales
+
+    pct_monto = monto_propuesto / monto_original if monto_original else Decimal("0")
+    pct_dias = Decimal(str(dias_propuesto)) / Decimal(str(plazo_original)) if plazo_original else Decimal("0")
+
+    if pct_monto > Decimal("0.25"):
+        raise ValueError(
+            f"El convenio excede el 25% del monto original permitido por el artículo 59 de la LOPSRM "
+            f"(acumulado propuesto: {pct_monto * 100:.1f}%)."
+        )
+    if pct_dias > Decimal("0.25"):
+        raise ValueError(
+            f"El convenio excede el 25% del plazo original permitido por el artículo 59 de la LOPSRM "
+            f"(acumulado propuesto: {pct_dias * 100:.1f}%)."
+        )
+
+
 def validar_garantias_para_activacion(contrato):
     """Devuelve la lista de tipos de garantía requeridos pero faltantes/vencidos/liberados.
     Lista vacía significa que el contrato está listo para activarse."""

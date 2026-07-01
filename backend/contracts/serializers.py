@@ -462,6 +462,30 @@ class ConvenioSerializer(serializers.ModelSerializer):
     def get_solicitado_por(self, obj):
         return obj.solicitado_por.get_full_name() if obj.solicitado_por else None
 
+    def validate_monto_adicional(self, value):
+        if value < 0:
+            raise serializers.ValidationError("El monto adicional no puede ser negativo.")
+        return value
+
+    def validate_dias_adicionales(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Los días adicionales no pueden ser negativos.")
+        return value
+
+    def validate(self, data):
+        tipo = data.get("tipo")
+        monto_adicional = data.get("monto_adicional") or 0
+        dias_adicionales = data.get("dias_adicionales") or 0
+        if tipo in (Convenio.Tipo.MONTO, Convenio.Tipo.AMBOS) and not monto_adicional:
+            raise serializers.ValidationError(
+                {"monto_adicional": "Requerido cuando el tipo de convenio incluye modificación de monto."}
+            )
+        if tipo in (Convenio.Tipo.PLAZO, Convenio.Tipo.AMBOS) and not dias_adicionales:
+            raise serializers.ValidationError(
+                {"dias_adicionales": "Requerido cuando el tipo de convenio incluye ampliación de plazo."}
+            )
+        return data
+
 
 class AvanceDiarioSerializer(serializers.ModelSerializer):
     contrato = ContractCompactSerializer(read_only=True)

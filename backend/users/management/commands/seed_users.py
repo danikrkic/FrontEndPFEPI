@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from contracts.models import Persona
@@ -16,8 +17,6 @@ DEMO_USERS = [
     ("Dani Juárez", "finanzas@gacm.mx", "finanzas", "DJ", None),
     ("Roberto Ibáñez", "finanzas2@gacm.mx", "finanzas", "RI", None),
 ]
-
-DEMO_PASSWORD = "demo123"
 
 
 class Command(BaseCommand):
@@ -41,7 +40,7 @@ class Command(BaseCommand):
                 },
             )
             if created:
-                user.set_password(DEMO_PASSWORD)
+                user.set_password(settings.DEFAULT_USER_PASSWORD)
                 user.save()
                 self.stdout.write(self.style.SUCCESS(f"Creado: {email} ({role})"))
             else:

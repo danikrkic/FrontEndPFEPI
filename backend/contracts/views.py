@@ -51,6 +51,7 @@ from .models import (
     UMBRAL_ATRASO_PP,
     validar_convenio_pendiente_unico,
     validar_garantias_para_activacion,
+    validar_tope_convenio,
 )
 from .serializers import (
     ActaEntregaRecepcionSerializer,
@@ -113,7 +114,7 @@ class EmpresaSupervisionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
-DEFAULT_USER_PASSWORD = getattr(settings, "DEFAULT_USER_PASSWORD", "demo123")
+DEFAULT_USER_PASSWORD = settings.DEFAULT_USER_PASSWORD
 
 
 class PersonaViewSet(viewsets.ModelViewSet):
@@ -1209,6 +1210,9 @@ class AnticipoViewSet(viewsets.ModelViewSet):
 class ConvenioViewSet(viewsets.ModelViewSet):
     serializer_class = ConvenioSerializer
     permission_classes = [IsAuthenticated, HasRolePermission]
+    # Un convenio queda append-only + revisar: no se permite editar ni borrar
+    # una vez solicitado, para no perder el rastro de auditoría.
+    http_method_names = ["get", "post", "head", "options"]
 
     ACTION_PERMISSIONS = {
         "create": "convenio.crear",
@@ -1228,10 +1232,24 @@ class ConvenioViewSet(viewsets.ModelViewSet):
         if not contratos_visibles_para(self.request.user).filter(pk=contrato.pk).exists():
             raise PermissionDenied("No tienes acceso a este contrato.")
 
+        if contrato.status != Contract.Status.ACTIVO:
+            raise ValidationError(
+                {"contrato_id": "Solo se pueden solicitar convenios modificatorios para un contrato activo."}
+            )
+
         try:
             validar_convenio_pendiente_unico(contrato)
         except Exception as e:
             raise ValidationError({"contrato_id": str(e)})
+
+        try:
+            validar_tope_convenio(
+                contrato,
+                serializer.validated_data.get("monto_adicional") or Decimal("0"),
+                serializer.validated_data.get("dias_adicionales") or 0,
+            )
+        except ValueError as e:
+            raise ValidationError({"monto_adicional": str(e)})
 
         alcance = serializer.validated_data.get("alcance")
         conceptos_afectados = serializer.validated_data.get("conceptos_afectados")
@@ -1268,12 +1286,22 @@ class ConvenioViewSet(viewsets.ModelViewSet):
                 {"detail": "status debe ser 'aprobado' o 'rechazado'."}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        if nuevo_status == Convenio.Status.APROBADO:
-            self._aplicar_convenio(convenio)
+        motivo_rechazo = request.data.get("motivo_rechazo", "").strip()
+        if nuevo_status == Convenio.Status.RECHAZADO and not motivo_rechazo:
+            raise ValidationError({"motivo_rechazo": "Se requiere especificar el motivo del rechazo."})
 
-        convenio.status = nuevo_status
-        convenio.motivo_rechazo = request.data.get("motivo_rechazo", "")
-        convenio.save(update_fields=["status", "motivo_rechazo"])
+        with transaction.atomic():
+            if nuevo_status == Convenio.Status.APROBADO:
+                try:
+                    validar_tope_convenio(convenio.contrato, convenio.monto_adicional, convenio.dias_adicionales)
+                except ValueError as e:
+                    raise ValidationError({"monto_adicional": str(e)})
+                self._aplicar_convenio(convenio)
+
+            convenio.status = nuevo_status
+            convenio.motivo_rechazo = motivo_rechazo
+            convenio.save(update_fields=["status", "motivo_rechazo"])
+
         return Response(ConvenioSerializer(convenio, context=self.get_serializer_context()).data)
 
     def _aplicar_convenio(self, convenio):
@@ -1294,7 +1322,7 @@ class ConvenioViewSet(viewsets.ModelViewSet):
             catalogo_actualizado = True
 
         contrato.monto = contrato.monto + convenio.monto_adicional
-        if convenio.tipo != Convenio.Tipo.MONTO and convenio.dias_adicionales:
+        if convenio.dias_adicionales:
             contrato.fecha_termino = contrato.fecha_termino + timedelta(days=convenio.dias_adicionales)
         contrato.plazo_dias = contrato.plazo_dias + convenio.dias_adicionales
         contrato.version = contrato.version + 1

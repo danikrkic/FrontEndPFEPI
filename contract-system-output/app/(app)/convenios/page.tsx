@@ -15,13 +15,16 @@
  */
 
 import { useMemo, useState } from "react"
-import { AlertTriangle, Check, GitBranch, Plus, X, History } from "lucide-react"
+import { AlertTriangle, Check, GitBranch, Plus, Trash2, X, History } from "lucide-react"
 import { useApp, can } from "@/lib/store"
 import {
   CONVENIO_TIPO_LABELS,
   type AcumuladoConvenios,
+  type ConceptoCatalogo,
   type Contract,
   type Convenio,
+  type ConvenioAlcance,
+  type ConvenioConceptoAfectado,
   type ConvenioTipo,
 } from "@/lib/types"
 import { formatDate, formatMoneyFull } from "@/lib/format"
@@ -52,6 +55,14 @@ import { ContractSelector } from "@/components/contract-selector"
 import { toast } from "sonner"
 
 const TIPOS: ConvenioTipo[] = ["plazo", "monto", "ambos"]
+
+const ALCANCE_LABELS: Record<ConvenioAlcance, string> = {
+  ajuste_monto_simple: "Ajuste de monto simple",
+  ajuste_cantidades: "Ajuste de cantidades de conceptos",
+  conceptos_nuevos: "Alta de conceptos nuevos",
+}
+
+const ALCANCES: ConvenioAlcance[] = ["ajuste_monto_simple", "ajuste_cantidades", "conceptos_nuevos"]
 
 export default function ConveniosPage() {
   const { convenios, contracts, user } = useApp()
@@ -355,9 +366,20 @@ function NuevoConvenioDialog() {
 
   const [contratoId, setContratoId] = useState(contratosActivos[0]?.id ?? "")
   const [tipo, setTipo] = useState<ConvenioTipo>("plazo")
+  const [alcance, setAlcance] = useState<ConvenioAlcance>("ajuste_monto_simple")
+  const [cantidadesNuevas, setCantidadesNuevas] = useState<Record<string, string>>({})
+  const [conceptosNuevos, setConceptosNuevos] = useState<Array<Omit<ConceptoCatalogo, "id" | "total" | "estado">>>([])
+
+  const contratoSeleccionado = contratosActivos.find((c) => c.id === contratoId)
+
+  function reset() {
+    setAlcance("ajuste_monto_simple")
+    setCantidadesNuevas({})
+    setConceptosNuevos([])
+  }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset() }}>
       <DialogTrigger asChild>
         <Button>
           <Plus className="h-4 w-4" />
@@ -384,6 +406,27 @@ function NuevoConvenioDialog() {
               e.preventDefault()
               const fd = new FormData(e.currentTarget)
               const documentos = (fd.getAll("documentos") as File[]).filter((f) => f.size > 0)
+
+              const conceptosAfectados: ConvenioConceptoAfectado[] | undefined =
+                alcance === "ajuste_cantidades" && contratoSeleccionado
+                  ? contratoSeleccionado.catalogoConceptos
+                      .filter((c) => cantidadesNuevas[c.id] && Number(cantidadesNuevas[c.id]) !== c.cantidad)
+                      .map((c) => ({
+                        conceptoId: c.id,
+                        cantidadAnterior: c.cantidad,
+                        cantidadNueva: Number(cantidadesNuevas[c.id]),
+                      }))
+                  : undefined
+
+              if (alcance === "ajuste_cantidades" && (!conceptosAfectados || conceptosAfectados.length === 0)) {
+                toast.error("Captura al menos una cantidad nueva distinta a la actual.")
+                return
+              }
+              if (alcance === "conceptos_nuevos" && conceptosNuevos.length === 0) {
+                toast.error("Agrega al menos un concepto nuevo.")
+                return
+              }
+
               setSubmitting(true)
               try {
                 await addConvenio(
@@ -393,8 +436,9 @@ function NuevoConvenioDialog() {
                     justificacion: String(fd.get("justificacion")),
                     montoAdicional: tipo === "plazo" ? 0 : Number(fd.get("monto") || 0),
                     diasAdicionales: tipo === "monto" ? 0 : Number(fd.get("dias") || 0),
-                    // Cambio 5: alcance del convenio (por defecto ajuste_monto_simple)
-                    alcance: "ajuste_monto_simple",
+                    alcance,
+                    conceptosAfectados,
+                    conceptosNuevos: alcance === "conceptos_nuevos" ? (conceptosNuevos as ConceptoCatalogo[]) : undefined,
                   },
                   documentos.length > 0 ? documentos : undefined,
                 )
@@ -432,6 +476,21 @@ function NuevoConvenioDialog() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="flex flex-col gap-2">
+              <Label>Alcance del convenio</Label>
+              <Select value={alcance} onValueChange={(v) => v && setAlcance(v as ConvenioAlcance)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ALCANCES.map((a) => (
+                    <SelectItem key={a} value={a}>
+                      {ALCANCE_LABELS[a]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {tipo !== "plazo" && (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="monto">Monto adicional (MXN)</Label>
@@ -444,6 +503,61 @@ function NuevoConvenioDialog() {
                 <Input id="dias" name="dias" type="number" defaultValue={0} />
               </div>
             )}
+
+            {alcance === "ajuste_cantidades" && contratoSeleccionado && (
+              <div className="flex flex-col gap-2">
+                <Label>Ajuste de cantidades por concepto</Label>
+                <p className="text-xs text-muted-foreground">
+                  Captura la cantidad nueva solo para los conceptos que cambian.
+                </p>
+                {contratoSeleccionado.catalogoConceptos.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Este contrato no tiene catálogo de conceptos.</p>
+                ) : (
+                  <div className="max-h-52 overflow-y-auto rounded-md border border-border">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left font-medium">Clave</th>
+                          <th className="px-2 py-1.5 text-right font-medium">Actual</th>
+                          <th className="px-2 py-1.5 text-right font-medium">Nueva</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {contratoSeleccionado.catalogoConceptos.map((c) => (
+                          <tr key={c.id} className="border-t border-border">
+                            <td className="px-2 py-1 font-medium">{c.clave}</td>
+                            <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
+                              {c.cantidad.toLocaleString("es-MX")} {c.unidad}
+                            </td>
+                            <td className="px-2 py-1">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder={String(c.cantidad)}
+                                className="h-6 w-24 text-xs text-right ml-auto"
+                                value={cantidadesNuevas[c.id] ?? ""}
+                                onChange={(ev) =>
+                                  setCantidadesNuevas((prev) => ({ ...prev, [c.id]: ev.target.value }))
+                                }
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {alcance === "conceptos_nuevos" && (
+              <NuevosConceptosBuilder
+                conceptos={conceptosNuevos}
+                onChange={setConceptosNuevos}
+              />
+            )}
+
             <div className="flex flex-col gap-2">
               <Label htmlFor="justificacion">
                 Justificación técnica <span className="text-destructive">*</span>
@@ -463,5 +577,112 @@ function NuevoConvenioDialog() {
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+// ── NuevosConceptosBuilder ────────────────────────────────────────────────────
+
+function NuevosConceptosBuilder({
+  conceptos,
+  onChange,
+}: {
+  conceptos: Array<Omit<ConceptoCatalogo, "id" | "total" | "estado">>
+  onChange: (conceptos: Array<Omit<ConceptoCatalogo, "id" | "total" | "estado">>) => void
+}) {
+  const [clave, setClave] = useState("")
+  const [descripcion, setDescripcion] = useState("")
+  const [unidad, setUnidad] = useState("")
+  const [cantidad, setCantidad] = useState("")
+  const [precioUnitario, setPrecioUnitario] = useState("")
+  const [capitulo, setCapitulo] = useState("")
+
+  function agregar() {
+    if (!clave || !descripcion || !unidad || !cantidad || !precioUnitario) {
+      toast.error("Completa clave, descripción, unidad, cantidad y precio unitario del concepto.")
+      return
+    }
+    onChange([
+      ...conceptos,
+      {
+        clave,
+        descripcion,
+        unidad,
+        cantidad: Number(cantidad),
+        precioUnitario: Number(precioUnitario),
+        ...(capitulo ? { capitulo } : {}),
+      },
+    ])
+    setClave("")
+    setDescripcion("")
+    setUnidad("")
+    setCantidad("")
+    setPrecioUnitario("")
+    setCapitulo("")
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Label>Conceptos nuevos a agregar al catálogo</Label>
+      {conceptos.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-md border border-border p-2">
+          {conceptos.map((c, i) => (
+            <div key={i} className="flex items-center justify-between gap-2 text-xs">
+              <span>
+                <span className="font-medium">{c.clave}</span> — {c.descripcion} ({c.cantidad} {c.unidad} ×{" "}
+                {c.precioUnitario})
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 text-destructive hover:text-destructive"
+                onClick={() => onChange(conceptos.filter((_, idx) => idx !== i))}
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2 rounded-md border border-dashed border-border p-2">
+        <Input placeholder="Clave" value={clave} onChange={(e) => setClave(e.target.value)} className="h-8 text-xs" />
+        <Input
+          placeholder="Unidad"
+          value={unidad}
+          onChange={(e) => setUnidad(e.target.value)}
+          className="h-8 text-xs"
+        />
+        <Input
+          placeholder="Descripción"
+          value={descripcion}
+          onChange={(e) => setDescripcion(e.target.value)}
+          className="col-span-2 h-8 text-xs"
+        />
+        <Input
+          type="number"
+          placeholder="Cantidad"
+          value={cantidad}
+          onChange={(e) => setCantidad(e.target.value)}
+          className="h-8 text-xs"
+        />
+        <Input
+          type="number"
+          placeholder="Precio unitario"
+          value={precioUnitario}
+          onChange={(e) => setPrecioUnitario(e.target.value)}
+          className="h-8 text-xs"
+        />
+        <Input
+          placeholder="Capítulo (opcional)"
+          value={capitulo}
+          onChange={(e) => setCapitulo(e.target.value)}
+          className="col-span-2 h-8 text-xs"
+        />
+        <Button type="button" size="sm" variant="outline" className="col-span-2" onClick={agregar}>
+          <Plus className="h-3.5 w-3.5" />
+          Agregar concepto a la lista
+        </Button>
+      </div>
+    </div>
   )
 }
