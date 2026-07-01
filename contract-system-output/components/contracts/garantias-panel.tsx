@@ -133,14 +133,14 @@ export function GarantiasPanel({ contract }: { contract: Contract }) {
                         <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <span className="truncate text-xs">{g.documento.nombre}</span>
                       </div>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6 shrink-0"
-                        render={<a href={g.documento.archivo} target="_blank" rel="noopener noreferrer" />}
+                      <a
+                        href={g.documento.archivo}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                       >
                         <Download className="h-3 w-3" />
-                      </Button>
+                      </a>
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground/60 mt-1">Sin póliza digitalizada</p>

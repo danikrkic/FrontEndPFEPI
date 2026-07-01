@@ -80,6 +80,8 @@ export interface ContractDocument {
   subidoPor: string
 }
 
+export type ConceptoEstado = "en_proceso" | "terminado"
+
 export interface ConceptoCatalogo {
   id: string
   clave: string
@@ -89,6 +91,33 @@ export interface ConceptoCatalogo {
   precioUnitario: number
   total: number
   capitulo?: string
+  estado: ConceptoEstado
+}
+
+export type ReporteAvanceStatus = "pendiente" | "validado" | "rechazado"
+
+export interface ReporteAvanceConcepto {
+  id: string
+  conceptoId: string
+  concepto: ConceptoCatalogo
+  reporteAnteriorId: string | null
+  fecha: string
+  cantidad: number
+  frenteUbicacion: string
+  fotografia: string
+  status: ReporteAvanceStatus
+  observaciones: string
+  usadoEnEstimacionId: string | null
+  creadoPor: string
+  fechaCreacion: string
+  revisadoPor: string | null
+  fechaRevision: string | null
+}
+
+export const REPORTE_AVANCE_STATUS_LABELS: Record<ReporteAvanceStatus, string> = {
+  pendiente: "Pendiente de validación",
+  validado: "Validado",
+  rechazado: "Rechazado",
 }
 
 // ── Cambio 1: "fianzas" y "garantias" eliminados de DocBlock ─────────────────
@@ -146,6 +175,7 @@ export interface Contract {
   documentos: ContractDocument[]
   catalogoConceptos: ConceptoCatalogo[]
   versiones: ContractVersion[]
+  reportesAvance: ReporteAvanceConcepto[]
   /** Fecha en que el contrato fue activado (ISO date) */
   fechaActivacion?: string
   acumuladoConvenios?: AcumuladoConvenios
@@ -265,7 +295,6 @@ export interface Estimacion {
   iva: number
   importeNeto: number
   lineas: LineaEstimacion[]
-  conceptosSugeridosTerminados?: Array<{ id: string; clave: string }>
 }
 
 // ── Cambio 2: Anticipo ────────────────────────────────────────────────────────
@@ -364,6 +393,7 @@ export interface Incumplimiento {
   evidenciaRef: string
   autor: string
   fecha: string
+  resuelto: boolean
 }
 
 export interface Minuta {
@@ -427,6 +457,75 @@ export interface Garantia {
   fechaRegistro: string
   liberadaPor: string | null
   fechaLiberacion: string | null
+}
+
+export type TerminacionTipo = "normal" | "anticipada" | "suspension"
+
+export const TERMINACION_TIPO_LABELS: Record<TerminacionTipo, string> = {
+  normal: "Normal",
+  anticipada: "Anticipada",
+  suspension: "Suspensión",
+}
+
+export type CierreStatus = "registrada" | "acta_entregada" | "finiquito_emitido"
+
+export const CIERRE_STATUS_LABELS: Record<CierreStatus, string> = {
+  registrada: "Terminación Registrada",
+  acta_entregada: "Acta Entregada",
+  finiquito_emitido: "Finiquito Emitido",
+}
+
+export interface ActaEntregaRecepcion {
+  id: string
+  fechaFirma: string
+  archivo: string
+  registradoPor: string
+  fechaRegistro: string
+}
+
+export interface TerminacionContrato {
+  id: string
+  contratoId: string
+  tipo: TerminacionTipo
+  fechaTerminacion: string
+  avanceFisicoFinal: number
+  notaCierre: string
+  motivo: string
+  registradoPor: string
+  fechaRegistro: string
+  cierreStatus: CierreStatus
+  acta: ActaEntregaRecepcion | null
+}
+
+export type FiniquitoStatus = "borrador" | "notificado" | "conforme" | "inconformidad" | "cerrado"
+
+export const FINIQUITO_STATUS_LABELS: Record<FiniquitoStatus, string> = {
+  borrador: "Borrador",
+  notificado: "Notificado al contratista",
+  conforme: "Conforme",
+  inconformidad: "Con Inconformidad",
+  cerrado: "Cerrado",
+}
+
+export interface Finiquito {
+  id: string
+  contratoId: string
+  estimacionesPendientes: number
+  ajustePrecios: number
+  otrosCreditosContratista: number
+  saldoAnticipoNoAmortizado: number
+  penasConvencionales: number
+  deducibles: number
+  totalCreditosContratista: number
+  totalCreditosDependencia: number
+  saldoNeto: number
+  status: FiniquitoStatus
+  fechaNotificacion: string | null
+  fechaLimiteRespuesta: string | null
+  conformidad: boolean | null
+  motivoInconformidad: string
+  emitidoPor: string
+  fechaCreacion: string
 }
 
 /** Calcula el status de una garantía a partir de su fechaVigencia.

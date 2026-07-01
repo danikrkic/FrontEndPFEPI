@@ -260,6 +260,7 @@ export const CONTRACTS: Contract[] = [
         cantidad: 1250,
         precioUnitario: 185.5,
         total: 231875,
+        estado: "en_proceso",
       },
       {
         id: "cc2",
@@ -269,6 +270,7 @@ export const CONTRACTS: Contract[] = [
         cantidad: 480,
         precioUnitario: 2750,
         total: 1320000,
+        estado: "en_proceso",
       },
       {
         id: "cc3",
@@ -278,6 +280,7 @@ export const CONTRACTS: Contract[] = [
         cantidad: 32.5,
         precioUnitario: 28500,
         total: 926250,
+        estado: "en_proceso",
       },
     ],
     versiones: [

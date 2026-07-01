@@ -173,6 +173,7 @@ function ConceptoDialog({
               unidad: unidadFinal,
               cantidad: Number(fd.get("cantidad")),
               precioUnitario: Number(fd.get("precio")),
+              estado: "en_proceso",
             })
             setCantidad("")
             setPrecio("")

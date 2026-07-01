@@ -13,6 +13,7 @@ from .views import (
     MinutaViewSet,
     OrdenPagoViewSet,
     PersonaViewSet,
+    ReporteAvanceConceptoViewSet,
 )
 
 router = DefaultRouter()
@@ -21,6 +22,7 @@ router.register("empresas-supervision", EmpresaSupervisionViewSet, basename="emp
 router.register("personas", PersonaViewSet, basename="persona")
 router.register("contratos", ContractViewSet, basename="contrato")
 router.register("estimaciones", EstimacionViewSet, basename="estimacion")
+router.register("reportes-avance", ReporteAvanceConceptoViewSet, basename="reporte-avance")
 router.register("ordenes-pago", OrdenPagoViewSet, basename="orden-pago")
 router.register("garantias", GarantiaViewSet, basename="garantia")
 router.register("anticipos", AnticipoViewSet, basename="anticipo")

@@ -377,21 +377,16 @@ function NotaDialog({
               toast.error("Selecciona al menos un concepto para este tipo de nota.")
               return
             }
-            const fotos = (fd.getAll("fotos") as File[]).filter((f) => f.size > 0)
             setSubmitting(true)
             try {
-              await addNote(
-                contract.id,
-                {
-                  tipo,
-                  contenido: String(fd.get("contenido")),
-                  ...(tipo === "concepto_terminado" && { conceptos: selectedConceptos }),
-                  ...((tipo === "respuesta" || tipo === "acuerdo") && notaPadreId
-                    ? { notaPadreId }
-                    : {}),
-                },
-                fotos.length > 0 ? fotos : undefined,
-              )
+              await addNote(contract.id, {
+                tipo,
+                contenido: String(fd.get("contenido")),
+                ...(tipo === "concepto_terminado" && { conceptos: selectedConceptos }),
+                ...((tipo === "respuesta" || tipo === "acuerdo") && notaPadreId
+                  ? { notaPadreId }
+                  : {}),
+              })
               toast.success("Nota registrada con las firmas de los responsables")
               setOpen(false)
             } catch (err) {
@@ -476,11 +471,6 @@ function NotaDialog({
             <Label htmlFor="contenido">Contenido</Label>
             <Textarea id="contenido" name="contenido" rows={4} required />
           </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="fotos">Fotografías (opcional)</Label>
-            <Input id="fotos" name="fotos" type="file" accept="image/*" multiple />
-          </div>
-
           <div className="rounded-md border border-border bg-muted/40 p-3">
             <p className="text-xs text-muted-foreground">
               La nota quedará firmada automáticamente por ti ({autorNombre}) y por{" "}

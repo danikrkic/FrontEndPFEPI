@@ -154,6 +154,7 @@ export function filasAConceptos(filas: FilaValidada[]): ConceptoCatalogo[] {
       cantidad: f.concepto.cantidad ?? 0,
       precioUnitario: f.concepto.precioUnitario ?? 0,
       total: f.concepto.total ?? 0,
+      estado: "en_proceso" as const,
       ...(f.concepto.capitulo ? { capitulo: f.concepto.capitulo } : {}),
     }))
 }

@@ -15,8 +15,17 @@ PERMISSION_MATRIX = {
     "pago.dispersar": ["finanzas"],
     "avance.registrar": ["supervision"],
     "incumplimiento.registrar": ["residente"],
+    "incumplimiento.resolver": ["residente"],
     "minuta.registrar": ["residente", "superintendente", "supervision"],
     "garantia.registrar": ["superintendente"],
+    "cierre.terminar": ["residente"],
+    "cierre.cargar-acta": ["residente"],
+    "finiquito.emitir": ["residente"],
+    "finiquito.notificar": ["residente"],
+    "finiquito.responder": ["residente", "superintendente"],
+    "finiquito.cerrar": ["residente"],
+    "avance_concepto.registrar": ["superintendente"],
+    "avance_concepto.validar": ["supervision"],
 }
 
 

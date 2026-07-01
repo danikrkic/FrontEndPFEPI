@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Q, Sum
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -10,10 +11,13 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from users.models import Role
 from users.permissions import HasRolePermission, PERMISOS_POR_TIPO_NOTA, can
 
 from .models import (
+    ActaEntregaRecepcion,
     Anticipo,
     AvanceDiario,
     BitacoraNote,
@@ -26,6 +30,7 @@ from .models import (
     Convenio,
     EmpresaSupervision,
     Estimacion,
+    Finiquito,
     Garantia,
     Incumplimiento,
     LineaEstimacion,
@@ -33,22 +38,25 @@ from .models import (
     OrdenPago,
     Persona,
     ProgramaObra,
+    ReporteAvanceConcepto,
     SolicitudActivacion,
+    TerminacionContrato,
     calcular_acumulado_convenios,
     calcular_avance_programado_contrato,
     calcular_avance_real_contrato,
     calcular_desglose_estimacion,
     calcular_mes_de_semana,
     construir_firmas,
+    evaluar_terminacion_concepto,
     UMBRAL_ATRASO_PP,
     validar_convenio_pendiente_unico,
     validar_garantias_para_activacion,
 )
 from .serializers import (
+    ActaEntregaRecepcionSerializer,
     AnticipoSerializer,
     AvanceDiarioSerializer,
     BitacoraNoteCreateSerializer,
-    BitacoraNoteFotoSerializer,
     BitacoraNoteSerializer,
     BitacoraSerializer,
     ConceptoCatalogoSerializer,
@@ -61,6 +69,7 @@ from .serializers import (
     ConvenioSerializer,
     EmpresaSupervisionSerializer,
     EstimacionSerializer,
+    FiniquitoSerializer,
     GarantiaSerializer,
     IncumplimientoSerializer,
     LineaEstimacionInputSerializer,
@@ -68,6 +77,8 @@ from .serializers import (
     OrdenPagoSerializer,
     PersonaSerializer,
     ProgramaObraSerializer,
+    ReporteAvanceConceptoSerializer,
+    TerminacionContratoSerializer,
 )
 
 # Roles que solo deben ver los contratos donde están asignados como
@@ -102,6 +113,9 @@ class EmpresaSupervisionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
+DEFAULT_USER_PASSWORD = getattr(settings, "DEFAULT_USER_PASSWORD", "demo123")
+
+
 class PersonaViewSet(viewsets.ModelViewSet):
     serializer_class = PersonaSerializer
     permission_classes = [IsAuthenticated]
@@ -120,6 +134,54 @@ class PersonaViewSet(viewsets.ModelViewSet):
             qs = qs.filter(empresa_contratista__isnull=True, empresa_supervision__isnull=True)
         return qs
 
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        persona_id = response.data.get("id")
+        try:
+            persona = Persona.objects.get(id=persona_id)
+        except Persona.DoesNotExist:
+            return response
+
+        if not persona.correo:
+            response.data["usuario_creado"] = False
+            return response
+
+        # Determine role from empresa relationship
+        if persona.empresa_contratista_id:
+            role = Role.SUPERINTENDENTE
+        elif persona.empresa_supervision_id:
+            role = Role.SUPERVISION
+        else:
+            role = Role.RESIDENTE
+
+        # Derive initials (up to 2 words)
+        parts = persona.nombre.split()
+        initials = "".join(p[0].upper() for p in parts[:2])
+        first_name, *rest = parts[0], parts[1:]
+        last_name = " ".join(rest[0]) if rest else ""
+
+        UserModel = get_user_model()
+        user, created = UserModel.objects.get_or_create(
+            email=persona.correo,
+            defaults={
+                "username": persona.correo,
+                "first_name": first_name,
+                "last_name": last_name,
+                "role": role,
+                "initials": initials,
+                "persona": persona,
+            },
+        )
+        if created:
+            user.set_password(DEFAULT_USER_PASSWORD)
+            user.save()
+        elif user.persona_id is None:
+            user.persona = persona
+            user.save(update_fields=["persona"])
+
+        response.data["usuario_creado"] = created
+        return response
+
 
 class ContractViewSet(viewsets.ModelViewSet):
     serializer_class = ContractSerializer
@@ -130,6 +192,12 @@ class ContractViewSet(viewsets.ModelViewSet):
         "solicitar_activacion": "contrato.activar",
         "revisar_activacion": "contrato.revisar-activacion",
         "abrir_bitacora": "bitacora.abrir",
+        "terminar": "cierre.terminar",
+        "cargar_acta": "cierre.cargar-acta",
+        "emit_finiquito": "finiquito.emitir",
+        "notificar_finiquito": "finiquito.notificar",
+        "responder_finiquito": "finiquito.responder",
+        "cerrar_finiquito": "finiquito.cerrar",
     }
 
     def get_permissions(self):
@@ -146,6 +214,9 @@ class ContractViewSet(viewsets.ModelViewSet):
             "bitacora",
             "anticipo",
             "programa_obra",
+            "terminacion",
+            "terminacion__acta",
+            "finiquito",
         ).prefetch_related(
             "contratista__superintendentes",
             "documentos",
@@ -467,12 +538,6 @@ class ContractViewSet(viewsets.ModelViewSet):
             serializer = BitacoraNoteCreateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
-            fotos_validadas = []
-            for imagen in request.FILES.getlist("fotos"):
-                foto_serializer = BitacoraNoteFotoSerializer(data={"imagen": imagen})
-                foto_serializer.is_valid(raise_exception=True)
-                fotos_validadas.append(foto_serializer.validated_data["imagen"])
-
             validated = dict(serializer.validated_data)
             conceptos_m2m = validated.pop("conceptos", [])
             nota_padre = validated.pop("nota_padre", None)
@@ -488,8 +553,6 @@ class ContractViewSet(viewsets.ModelViewSet):
             )
             if conceptos_m2m:
                 nota.conceptos.set(conceptos_m2m)
-            for imagen in fotos_validadas:
-                nota.fotos.create(imagen=imagen)
             return Response(
                 BitacoraNoteSerializer(nota, context=self.get_serializer_context()).data,
                 status=status.HTTP_201_CREATED,
@@ -497,6 +560,275 @@ class ContractViewSet(viewsets.ModelViewSet):
 
         notas = bitacora.notas.all() if bitacora else []
         return Response(BitacoraNoteSerializer(notas, many=True, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="terminar")
+    def terminar(self, request, pk=None):
+        contrato = self.get_object()
+
+        if contrato.status != Contract.Status.ACTIVO:
+            raise ValidationError("Solo se puede registrar la terminación de un contrato activo.")
+        if hasattr(contrato, "terminacion"):
+            raise ValidationError("Ya existe un registro de terminación para este contrato.")
+        if contrato.convenios.filter(status=Convenio.Status.PENDIENTE).exists():
+            raise ValidationError(
+                "No se puede registrar la terminación mientras exista un convenio modificatorio pendiente de revisión."
+            )
+        if contrato.incumplimientos.filter(resuelto=False).exists():
+            raise ValidationError(
+                "No se puede registrar la terminación mientras existan incumplimientos formales sin resolver."
+            )
+
+        tipo = request.data.get("tipo")
+        if tipo not in (
+            TerminacionContrato.Tipo.NORMAL,
+            TerminacionContrato.Tipo.ANTICIPADA,
+            TerminacionContrato.Tipo.SUSPENSION,
+        ):
+            raise ValidationError({"tipo": "Tipo de terminación inválido."})
+
+        avance_raw = request.data.get("avance_fisico_final")
+        if avance_raw is None:
+            raise ValidationError({"avance_fisico_final": "El avance físico final es requerido."})
+        avance_fisico_final = Decimal(str(avance_raw))
+
+        if tipo == TerminacionContrato.Tipo.NORMAL and avance_fisico_final < 100:
+            raise ValidationError(
+                "Para terminación de tipo normal, el avance físico final debe ser del 100%."
+            )
+
+        nota_cierre = request.data.get("nota_cierre", "").strip()
+        if not nota_cierre:
+            raise ValidationError({"nota_cierre": "La nota de cierre es requerida."})
+
+        motivo = request.data.get("motivo", "").strip()
+        if tipo in (TerminacionContrato.Tipo.ANTICIPADA, TerminacionContrato.Tipo.SUSPENSION) and not motivo:
+            raise ValidationError(
+                {"motivo": "Para terminación anticipada o suspensión, se requiere capturar el motivo justificado."}
+            )
+
+        fecha_terminacion_str = request.data.get("fecha_terminacion", str(date.today()))
+        try:
+            fecha_terminacion = date.fromisoformat(fecha_terminacion_str)
+        except (ValueError, TypeError):
+            raise ValidationError({"fecha_terminacion": "Fecha de terminación inválida."})
+
+        TIPO_LABELS = {
+            TerminacionContrato.Tipo.NORMAL: "Normal",
+            TerminacionContrato.Tipo.ANTICIPADA: "Anticipada",
+            TerminacionContrato.Tipo.SUSPENSION: "Suspensión",
+        }
+
+        with transaction.atomic():
+            TerminacionContrato.objects.create(
+                contrato=contrato,
+                tipo=tipo,
+                fecha_terminacion=fecha_terminacion,
+                avance_fisico_final=avance_fisico_final,
+                nota_cierre=nota_cierre,
+                motivo=motivo,
+                registrado_por=request.user,
+            )
+
+            bitacora = getattr(contrato, "bitacora", None)
+            if bitacora and bitacora.abierta:
+                contenido_lineas = [
+                    f"NOTA DE CIERRE — Terminación {TIPO_LABELS.get(tipo, tipo)}",
+                    f"Fecha de terminación: {fecha_terminacion}",
+                    f"Avance físico final: {avance_fisico_final}%",
+                    nota_cierre,
+                ]
+                if motivo:
+                    contenido_lineas.append(f"Motivo: {motivo}")
+                bitacora.notas.create(
+                    numero=bitacora.notas.count() + 1,
+                    tipo=BitacoraNote.Tipo.INSTRUCCION,
+                    contenido="\n".join(contenido_lineas),
+                    autor=request.user,
+                    rol=request.user.role,
+                    fecha=date.today(),
+                    firmas=construir_firmas(contrato, request.user),
+                )
+
+            contrato.status = Contract.Status.EN_CIERRE
+            contrato.save(update_fields=["status"])
+
+        contrato.refresh_from_db()
+        return Response(ContractSerializer(contrato, context=self.get_serializer_context()).data)
+
+    @action(
+        detail=True, methods=["post"], url_path="cargar-acta",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def cargar_acta(self, request, pk=None):
+        contrato = self.get_object()
+
+        terminacion = getattr(contrato, "terminacion", None)
+        if terminacion is None:
+            raise ValidationError("Debe registrar la terminación del contrato antes de cargar el acta.")
+        if hasattr(terminacion, "acta"):
+            raise ValidationError("Ya existe un acta de entrega-recepción para este contrato.")
+
+        fecha_firma_str = request.data.get("fecha_firma")
+        if not fecha_firma_str:
+            raise ValidationError({"fecha_firma": "La fecha de firma es requerida."})
+        try:
+            fecha_firma = date.fromisoformat(fecha_firma_str)
+        except (ValueError, TypeError):
+            raise ValidationError({"fecha_firma": "Fecha inválida."})
+
+        archivo = request.FILES.get("archivo")
+        if not archivo:
+            raise ValidationError({"archivo": "El archivo del acta es requerido."})
+
+        with transaction.atomic():
+            ActaEntregaRecepcion.objects.create(
+                terminacion=terminacion,
+                fecha_firma=fecha_firma,
+                archivo=archivo,
+                registrado_por=request.user,
+            )
+            terminacion.cierre_status = TerminacionContrato.CierreStatus.ACTA_ENTREGADA
+            terminacion.save(update_fields=["cierre_status"])
+
+        contrato.refresh_from_db()
+        return Response(ContractSerializer(contrato, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["get", "post"], url_path="finiquito")
+    def emit_finiquito(self, request, pk=None):
+        contrato = self.get_object()
+
+        if request.method == "GET":
+            fin = getattr(contrato, "finiquito", None)
+            if fin is None:
+                return Response(None)
+            return Response(FiniquitoSerializer(fin, context=self.get_serializer_context()).data)
+
+        terminacion = getattr(contrato, "terminacion", None)
+        if terminacion is None:
+            raise ValidationError("Debe registrar la terminación del contrato antes de emitir el finiquito.")
+        if not hasattr(terminacion, "acta"):
+            raise ValidationError("Debe cargar el acta de entrega-recepción antes de emitir el finiquito.")
+
+        fin = getattr(contrato, "finiquito", None)
+        if fin is not None and fin.status != Finiquito.Status.BORRADOR:
+            raise ValidationError("El finiquito ya fue notificado y no puede modificarse.")
+
+        anticipo = getattr(contrato, "anticipo", None)
+        saldo_anticipo = anticipo.saldo_pendiente if anticipo else Decimal("0")
+
+        def to_decimal(key):
+            val = request.data.get(key, 0)
+            try:
+                return Decimal(str(val))
+            except Exception:
+                raise ValidationError({key: "Valor numérico inválido."})
+
+        estimaciones_pendientes = to_decimal("estimaciones_pendientes")
+        ajuste_precios = to_decimal("ajuste_precios")
+        otros_creditos_contratista = to_decimal("otros_creditos_contratista")
+        penas_convencionales = to_decimal("penas_convencionales")
+        deducibles = to_decimal("deducibles")
+
+        total_contratista = estimaciones_pendientes + ajuste_precios + otros_creditos_contratista
+        total_dependencia = saldo_anticipo + penas_convencionales + deducibles
+        saldo_neto = total_contratista - total_dependencia
+
+        with transaction.atomic():
+            if fin is None:
+                Finiquito.objects.create(
+                    contrato=contrato,
+                    estimaciones_pendientes=estimaciones_pendientes,
+                    ajuste_precios=ajuste_precios,
+                    otros_creditos_contratista=otros_creditos_contratista,
+                    saldo_anticipo_no_amortizado=saldo_anticipo,
+                    penas_convencionales=penas_convencionales,
+                    deducibles=deducibles,
+                    total_creditos_contratista=total_contratista,
+                    total_creditos_dependencia=total_dependencia,
+                    saldo_neto=saldo_neto,
+                    emitido_por=request.user,
+                )
+                terminacion.cierre_status = TerminacionContrato.CierreStatus.FINIQUITO_EMITIDO
+                terminacion.save(update_fields=["cierre_status"])
+            else:
+                fin.estimaciones_pendientes = estimaciones_pendientes
+                fin.ajuste_precios = ajuste_precios
+                fin.otros_creditos_contratista = otros_creditos_contratista
+                fin.saldo_anticipo_no_amortizado = saldo_anticipo
+                fin.penas_convencionales = penas_convencionales
+                fin.deducibles = deducibles
+                fin.total_creditos_contratista = total_contratista
+                fin.total_creditos_dependencia = total_dependencia
+                fin.saldo_neto = saldo_neto
+                fin.save()
+
+        contrato.refresh_from_db()
+        return Response(ContractSerializer(contrato, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="finiquito/notificar")
+    def notificar_finiquito(self, request, pk=None):
+        contrato = self.get_object()
+        fin = getattr(contrato, "finiquito", None)
+        if fin is None:
+            raise ValidationError("No existe un finiquito para este contrato.")
+        if fin.status != Finiquito.Status.BORRADOR:
+            raise ValidationError("Solo se puede notificar un finiquito en estado borrador.")
+
+        hoy = date.today()
+        fin.status = Finiquito.Status.NOTIFICADO
+        fin.fecha_notificacion = hoy
+        fin.fecha_limite_respuesta = hoy + timedelta(days=15)
+        fin.save(update_fields=["status", "fecha_notificacion", "fecha_limite_respuesta"])
+
+        contrato.refresh_from_db()
+        return Response(ContractSerializer(contrato, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="finiquito/responder")
+    def responder_finiquito(self, request, pk=None):
+        contrato = self.get_object()
+        fin = getattr(contrato, "finiquito", None)
+        if fin is None:
+            raise ValidationError("No existe un finiquito para este contrato.")
+        if fin.status != Finiquito.Status.NOTIFICADO:
+            raise ValidationError("Solo se puede responder un finiquito en estado notificado.")
+
+        conformidad = request.data.get("conformidad")
+        if conformidad is None:
+            raise ValidationError({"conformidad": "Se requiere indicar la conformidad (true/false)."})
+        conformidad = bool(conformidad)
+
+        motivo_inconformidad = request.data.get("motivo_inconformidad", "").strip()
+        if not conformidad and not motivo_inconformidad:
+            raise ValidationError({"motivo_inconformidad": "Se requiere el motivo de inconformidad."})
+
+        fin.conformidad = conformidad
+        fin.motivo_inconformidad = motivo_inconformidad
+        fin.status = Finiquito.Status.CONFORME if conformidad else Finiquito.Status.INCONFORMIDAD
+        fin.save(update_fields=["conformidad", "motivo_inconformidad", "status"])
+
+        contrato.refresh_from_db()
+        return Response(ContractSerializer(contrato, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="finiquito/cerrar")
+    def cerrar_finiquito(self, request, pk=None):
+        contrato = self.get_object()
+        fin = getattr(contrato, "finiquito", None)
+        if fin is None:
+            raise ValidationError("No existe un finiquito para este contrato.")
+        if fin.status not in (Finiquito.Status.CONFORME, Finiquito.Status.INCONFORMIDAD):
+            raise ValidationError(
+                "El contrato solo puede cerrarse si el finiquito está en estado conforme o "
+                "con inconformidad registrada."
+            )
+
+        with transaction.atomic():
+            fin.status = Finiquito.Status.CERRADO
+            fin.save(update_fields=["status"])
+            contrato.status = Contract.Status.CERRADO
+            contrato.save(update_fields=["status"])
+
+        contrato.refresh_from_db()
+        return Response(ContractSerializer(contrato, context=self.get_serializer_context()).data)
 
 
 class EstimacionViewSet(viewsets.ModelViewSet):
@@ -533,7 +865,34 @@ class EstimacionViewSet(viewsets.ModelViewSet):
                 raise ValidationError(
                     {"lineas": f"El concepto {concepto.clave} no pertenece a este contrato."}
                 )
-            lineas_validadas.append(ls.validated_data)
+
+            reportes = ls.validated_data["reporte_ids"]
+            for reporte in reportes:
+                if reporte.concepto_id != concepto.id:
+                    raise ValidationError(
+                        {"lineas": f"El reporte #{reporte.id} no corresponde al concepto {concepto.clave}."}
+                    )
+                if reporte.status != ReporteAvanceConcepto.Status.VALIDADO:
+                    raise ValidationError(
+                        {"lineas": f"El reporte #{reporte.id} del concepto {concepto.clave} no está validado."}
+                    )
+                if reporte.usado_en_estimacion_id is not None:
+                    raise ValidationError(
+                        {"lineas": f"El reporte #{reporte.id} del concepto {concepto.clave} ya fue incluido en otra estimación."}
+                    )
+
+            cantidad_ejecutada = sum((r.cantidad for r in reportes), Decimal("0"))
+            if cantidad_ejecutada <= 0:
+                raise ValidationError(
+                    {"lineas": f"El concepto {concepto.clave} debe incluir al menos un reporte validado."}
+                )
+
+            lineas_validadas.append({
+                "concepto": concepto,
+                "cantidad_ejecutada": cantidad_ejecutada,
+                "generador_detalle": ls.validated_data.get("generador_detalle", ""),
+                "reportes": reportes,
+            })
 
         numero = Estimacion.objects.filter(contrato=contrato).count() + 1
         anticipo = getattr(contrato, "anticipo", None)
@@ -571,8 +930,11 @@ class EstimacionViewSet(viewsets.ModelViewSet):
                     concepto=concepto,
                     cantidad_ejecutada=item["cantidad_ejecutada"],
                     cantidad_acumulada=acumulados_previos[concepto.id] + item["cantidad_ejecutada"],
-                    generador_detalle=item.get("generador_detalle", ""),
+                    generador_detalle=item["generador_detalle"],
                 )
+                ReporteAvanceConcepto.objects.filter(
+                    id__in=[r.id for r in item["reportes"]]
+                ).update(usado_en_estimacion=estimacion)
 
     @action(detail=True, methods=["post"])
     def revisar(self, request, pk=None):
@@ -656,6 +1018,103 @@ class EstimacionViewSet(viewsets.ModelViewSet):
         data = EstimacionSerializer(estimacion, context=self.get_serializer_context()).data
         if advertencia:
             data["advertencia_avance"] = advertencia
+        return Response(data)
+
+
+class ReporteAvanceConceptoViewSet(viewsets.ModelViewSet):
+    serializer_class = ReporteAvanceConceptoSerializer
+    permission_classes = [IsAuthenticated, HasRolePermission]
+    parser_classes = [MultiPartParser, FormParser]
+
+    ACTION_PERMISSIONS = {
+        "create": "avance_concepto.registrar",
+        "revisar": "avance_concepto.validar",
+    }
+
+    def get_permissions(self):
+        self.required_action = self.ACTION_PERMISSIONS.get(self.action)
+        return [permission() for permission in self.permission_classes]
+
+    def get_queryset(self):
+        contratos = contratos_visibles_para(self.request.user)
+        return ReporteAvanceConcepto.objects.filter(concepto__contrato__in=contratos).select_related(
+            "concepto", "concepto__contrato", "creado_por", "revisado_por", "reporte_anterior"
+        )
+
+    def perform_create(self, serializer):
+        concepto = serializer.validated_data["concepto"]
+        if not contratos_visibles_para(self.request.user).filter(pk=concepto.contrato_id).exists():
+            raise PermissionDenied("No tienes acceso a este contrato.")
+        if concepto.contrato.status != Contract.Status.ACTIVO:
+            raise ValidationError("Solo se pueden registrar reportes de avance para un contrato activo.")
+        if concepto.estado == ConceptoCatalogo.Estado.TERMINADO:
+            raise ValidationError("El concepto ya fue marcado como terminado.")
+
+        reporte_anterior = serializer.validated_data.get("reporte_anterior")
+        if reporte_anterior is not None:
+            if reporte_anterior.concepto_id != concepto.id:
+                raise ValidationError({"reporte_anterior": "El reporte anterior no corresponde a este concepto."})
+            if reporte_anterior.creado_por_id != self.request.user.id:
+                raise PermissionDenied("Solo quien registró el reporte original puede corregirlo.")
+            if reporte_anterior.status != ReporteAvanceConcepto.Status.RECHAZADO:
+                raise ValidationError({"reporte_anterior": "Solo se puede corregir un reporte rechazado."})
+            if hasattr(reporte_anterior, "correccion"):
+                raise ValidationError({"reporte_anterior": "Este reporte ya fue corregido y reenviado."})
+
+        cantidad = serializer.validated_data["cantidad"]
+        acumulado_validado = concepto.reportes_avance.filter(
+            status=ReporteAvanceConcepto.Status.VALIDADO
+        ).aggregate(total=Sum("cantidad"))["total"] or Decimal("0")
+        if acumulado_validado + cantidad > concepto.cantidad:
+            raise ValidationError(
+                {"cantidad": (
+                    f"El acumulado validado ({acumulado_validado}) más esta cantidad excede "
+                    f"lo autorizado para el concepto ({concepto.cantidad})."
+                )}
+            )
+
+        serializer.save(creado_por=self.request.user)
+
+    @action(detail=True, methods=["post"])
+    def revisar(self, request, pk=None):
+        reporte = self.get_object()
+        if reporte.status != ReporteAvanceConcepto.Status.PENDIENTE:
+            raise ValidationError("Solo se puede validar un reporte pendiente de validación.")
+
+        nuevo_status = request.data.get("status")
+        if nuevo_status not in (ReporteAvanceConcepto.Status.VALIDADO, ReporteAvanceConcepto.Status.RECHAZADO):
+            return Response(
+                {"detail": "status debe ser 'validado' o 'rechazado'."}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        observaciones = request.data.get("observaciones", "").strip()
+        if nuevo_status == ReporteAvanceConcepto.Status.RECHAZADO and not observaciones:
+            raise ValidationError({"observaciones": "Se requiere registrar observaciones al rechazar un reporte."})
+
+        concepto_terminado = False
+        with transaction.atomic():
+            if nuevo_status == ReporteAvanceConcepto.Status.VALIDADO:
+                concepto = ConceptoCatalogo.objects.select_for_update().get(pk=reporte.concepto_id)
+                acumulado_validado = concepto.reportes_avance.filter(
+                    status=ReporteAvanceConcepto.Status.VALIDADO
+                ).aggregate(total=Sum("cantidad"))["total"] or Decimal("0")
+                if acumulado_validado + reporte.cantidad > concepto.cantidad:
+                    raise ValidationError(
+                        "El acumulado validado excede la cantidad autorizada para este concepto."
+                    )
+
+            reporte.status = nuevo_status
+            reporte.observaciones = observaciones
+            reporte.revisado_por = request.user
+            reporte.fecha_revision = timezone.now()
+            reporte.save(update_fields=["status", "observaciones", "revisado_por", "fecha_revision"])
+
+            if nuevo_status == ReporteAvanceConcepto.Status.VALIDADO:
+                concepto_terminado = evaluar_terminacion_concepto(reporte.concepto)
+
+        data = ReporteAvanceConceptoSerializer(reporte, context=self.get_serializer_context()).data
+        if concepto_terminado:
+            data["concepto_terminado"] = True
         return Response(data)
 
 
@@ -879,7 +1338,10 @@ class AvanceDiarioViewSet(viewsets.ModelViewSet):
 class IncumplimientoViewSet(viewsets.ModelViewSet):
     serializer_class = IncumplimientoSerializer
     permission_classes = [IsAuthenticated, HasRolePermission]
-    ACTION_PERMISSIONS = {"create": "incumplimiento.registrar"}
+    ACTION_PERMISSIONS = {
+        "create": "incumplimiento.registrar",
+        "resolver": "incumplimiento.resolver",
+    }
 
     def get_permissions(self):
         self.required_action = self.ACTION_PERMISSIONS.get(self.action)
@@ -894,6 +1356,15 @@ class IncumplimientoViewSet(viewsets.ModelViewSet):
         if not contratos_visibles_para(self.request.user).filter(pk=contrato.pk).exists():
             raise PermissionDenied("No tienes acceso a este contrato.")
         serializer.save(autor=self.request.user)
+
+    @action(detail=True, methods=["post"])
+    def resolver(self, request, pk=None):
+        incumplimiento = self.get_object()
+        if not contratos_visibles_para(self.request.user).filter(pk=incumplimiento.contrato_id).exists():
+            raise PermissionDenied("No tienes acceso a este contrato.")
+        incumplimiento.resuelto = True
+        incumplimiento.save(update_fields=["resuelto"])
+        return Response(IncumplimientoSerializer(incumplimiento, context=self.get_serializer_context()).data)
 
 
 class MinutaViewSet(viewsets.ModelViewSet):

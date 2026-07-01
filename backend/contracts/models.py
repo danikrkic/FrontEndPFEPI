@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Sum
 
 from users.models import Role
 
@@ -107,6 +108,10 @@ class Contract(models.Model):
 
 
 class ConceptoCatalogo(models.Model):
+    class Estado(models.TextChoices):
+        EN_PROCESO = "en_proceso", "En proceso"
+        TERMINADO = "terminado", "Terminado"
+
     contrato = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name="catalogo_conceptos")
     clave = models.CharField(max_length=50)
     descripcion = models.CharField(max_length=300)
@@ -115,6 +120,7 @@ class ConceptoCatalogo(models.Model):
     precio_unitario = models.DecimalField(max_digits=14, decimal_places=2)
     total = models.DecimalField(max_digits=14, decimal_places=2, editable=False)
     capitulo = models.CharField(max_length=200, blank=True)
+    estado = models.CharField(max_length=20, choices=Estado.choices, default=Estado.EN_PROCESO)
 
     def save(self, *args, **kwargs):
         self.total = Decimal(str(self.cantidad)) * Decimal(str(self.precio_unitario))
@@ -388,6 +394,46 @@ class LineaEstimacion(models.Model):
         return f"Línea {self.concepto.clave} - {self.estimacion}"
 
 
+def reporte_avance_upload_to(instance, filename):
+    return f"reportes_avance/contrato_{instance.concepto.contrato_id}/{filename}"
+
+
+class ReporteAvanceConcepto(models.Model):
+    class Status(models.TextChoices):
+        PENDIENTE = "pendiente", "Pendiente de validación"
+        VALIDADO = "validado", "Validado"
+        RECHAZADO = "rechazado", "Rechazado"
+
+    concepto = models.ForeignKey(ConceptoCatalogo, on_delete=models.PROTECT, related_name="reportes_avance")
+    reporte_anterior = models.OneToOneField(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="correccion"
+    )
+    fecha = models.DateField()
+    cantidad = models.DecimalField(max_digits=14, decimal_places=2)
+    frente_ubicacion = models.CharField(max_length=200)
+    fotografia = models.ImageField(upload_to=reporte_avance_upload_to)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDIENTE)
+    observaciones = models.TextField(blank=True)
+    usado_en_estimacion = models.ForeignKey(
+        Estimacion, on_delete=models.SET_NULL, null=True, blank=True, related_name="reportes_consumidos"
+    )
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="reportes_avance_creados"
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    revisado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="reportes_avance_revisados",
+    )
+    fecha_revision = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-fecha_creacion"]
+
+    def __str__(self):
+        return f"Reporte {self.concepto.clave} - {self.fecha} ({self.status})"
+
+
 def validar_convenio_pendiente_unico(contrato):
     """Bloquea si ya hay un convenio en revisión para el contrato."""
     if contrato.convenios.filter(status=Convenio.Status.PENDIENTE).exists():
@@ -442,13 +488,19 @@ def calcular_mes_de_semana(numero_semana: int) -> int:
     return ((numero_semana - 1) // 4) + 1
 
 
-def sugerir_notas_concepto_terminado(estimacion):
-    """Devuelve los conceptos cuya cantidad acumulada (aceptada + esta estimación) alcanzó el 100%."""
-    return [
-        linea.concepto
-        for linea in estimacion.lineas.all()
-        if linea.cantidad_acumulada >= linea.concepto.cantidad and linea.concepto.cantidad > 0
-    ]
+def evaluar_terminacion_concepto(concepto):
+    """Marca concepto.estado='terminado' si el acumulado de reportes validados alcanza
+    la cantidad autorizada. Retorna True si el concepto acaba de quedar terminado."""
+    if concepto.estado == ConceptoCatalogo.Estado.TERMINADO:
+        return False
+    acumulado = concepto.reportes_avance.filter(
+        status=ReporteAvanceConcepto.Status.VALIDADO
+    ).aggregate(total=Sum("cantidad"))["total"] or Decimal("0")
+    if concepto.cantidad > 0 and acumulado >= concepto.cantidad:
+        concepto.estado = ConceptoCatalogo.Estado.TERMINADO
+        concepto.save(update_fields=["estado"])
+        return True
+    return False
 
 
 def calcular_garantia_status(fecha_vigencia):
@@ -622,6 +674,7 @@ class Incumplimiento(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="incumplimientos_registrados"
     )
     fecha = models.DateField(auto_now_add=True)
+    resuelto = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-fecha", "-id"]
@@ -720,3 +773,90 @@ class ProgramaObra(models.Model):
 
     def __str__(self):
         return f"Programa de obra - {self.contrato.no_contrato}"
+
+
+def acta_entrega_upload_to(instance, filename):
+    return f"actas/contrato_{instance.terminacion.contrato_id}/{filename}"
+
+
+class TerminacionContrato(models.Model):
+    class Tipo(models.TextChoices):
+        NORMAL = "normal", "Normal"
+        ANTICIPADA = "anticipada", "Anticipada"
+        SUSPENSION = "suspension", "Suspensión"
+
+    class CierreStatus(models.TextChoices):
+        REGISTRADA = "registrada", "Terminación Registrada"
+        ACTA_ENTREGADA = "acta_entregada", "Acta Entregada"
+        FINIQUITO_EMITIDO = "finiquito_emitido", "Finiquito Emitido"
+
+    contrato = models.OneToOneField(Contract, on_delete=models.CASCADE, related_name="terminacion")
+    tipo = models.CharField(max_length=20, choices=Tipo.choices)
+    fecha_terminacion = models.DateField()
+    avance_fisico_final = models.DecimalField(max_digits=5, decimal_places=2)
+    nota_cierre = models.TextField()
+    motivo = models.TextField(blank=True)
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name="terminaciones_registradas"
+    )
+    fecha_registro = models.DateField(auto_now_add=True)
+    cierre_status = models.CharField(
+        max_length=30, choices=CierreStatus.choices, default=CierreStatus.REGISTRADA
+    )
+
+    def __str__(self):
+        return f"Terminación {self.contrato.no_contrato} ({self.tipo})"
+
+
+class ActaEntregaRecepcion(models.Model):
+    terminacion = models.OneToOneField(
+        TerminacionContrato, on_delete=models.CASCADE, related_name="acta"
+    )
+    fecha_firma = models.DateField()
+    archivo = models.FileField(upload_to=acta_entrega_upload_to)
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name="actas_registradas"
+    )
+    fecha_registro = models.DateField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Acta {self.terminacion.contrato.no_contrato}"
+
+
+class Finiquito(models.Model):
+    class Status(models.TextChoices):
+        BORRADOR = "borrador", "Borrador"
+        NOTIFICADO = "notificado", "Notificado"
+        CONFORME = "conforme", "Conforme"
+        INCONFORMIDAD = "inconformidad", "Con Inconformidad"
+        CERRADO = "cerrado", "Cerrado"
+
+    contrato = models.OneToOneField(Contract, on_delete=models.CASCADE, related_name="finiquito")
+    # Créditos a favor del contratista
+    estimaciones_pendientes = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    ajuste_precios = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    otros_creditos_contratista = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # Créditos a favor de la dependencia
+    saldo_anticipo_no_amortizado = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    penas_convencionales = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    deducibles = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # Calculados por el sistema
+    total_creditos_contratista = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total_creditos_dependencia = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    saldo_neto = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # Workflow
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.BORRADOR)
+    fecha_notificacion = models.DateField(null=True, blank=True)
+    fecha_limite_respuesta = models.DateField(null=True, blank=True)
+    conformidad = models.BooleanField(null=True, blank=True)
+    motivo_inconformidad = models.TextField(blank=True)
+    emitido_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name="finiquitos_emitidos"
+    )
+    fecha_creacion = models.DateField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Finiquito {self.contrato.no_contrato} ({self.status})"

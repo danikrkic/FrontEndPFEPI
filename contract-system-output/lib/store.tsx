@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
 } from "react"
+import { toast } from "sonner"
 import type {
   Anticipo,
   AvanceDiario,
@@ -21,6 +22,7 @@ import type {
   DocBlock,
   EmpresaSupervision,
   Estimacion,
+  Finiquito,
   Garantia,
   GarantiaTipo,
   Incumplimiento,
@@ -32,12 +34,15 @@ import type {
   ProgramaObra,
   Role,
   SolicitudActivacion,
+  TerminacionContrato,
   User,
 } from "./types"
 import {
   abrirBitacoraRequest,
   addBitacoraNotaRequest,
   adaptContractBundle,
+  cargarActaRequest,
+  cerrarFiniquitoRequest,
   clearTokens,
   createAnticipoRequest,
   createAvanceRequest,
@@ -51,6 +56,7 @@ import {
   createMinutaRequest,
   createPersonaRequest,
   dispersarPagoRequest,
+  emitirFiniquitoRequest,
   fetchContrato,
   fetchContratistas,
   fetchContratos,
@@ -59,12 +65,18 @@ import {
   liberarGarantiaRequest,
   loginRequest,
   meRequest,
+  notificarFiniquitoRequest,
+  crearReporteAvanceRequest,
   putCatalogoRequest,
   putProgramaObraRequest,
+  responderFiniquitoRequest,
+  resolverIncumplimientoRequest,
   revisarActivacionRequest,
   revisarConvenioRequest,
   revisarEstimacionRequest,
+  revisarReporteAvanceRequest,
   solicitarActivacionRequest,
+  terminarContratoRequest,
   toContratista,
   toEmpresaSupervision,
   toOrdenPago,
@@ -72,6 +84,9 @@ import {
   uploadDocumentoRequest,
   type ApiUser,
   type ContractBundle,
+  type EmitirFiniquitoPayload,
+  type ResponderFiniquitoPayload,
+  type TerminarContratoPayload,
 } from "./api"
 
 function toUser(apiUser: ApiUser): User {
@@ -114,7 +129,14 @@ interface AppState {
   addContract: (
     c: Omit<
       Contract,
-      "id" | "version" | "documentos" | "versiones" | "avanceProgramado" | "avanceReal" | "catalogoConceptos"
+      | "id"
+      | "version"
+      | "documentos"
+      | "versiones"
+      | "avanceProgramado"
+      | "avanceReal"
+      | "catalogoConceptos"
+      | "reportesAvance"
     >,
   ) => Promise<void>
   addContratista: (c: Omit<Contratista, "id" | "superintendentes">) => Promise<Contratista>
@@ -128,7 +150,6 @@ interface AppState {
   addNote: (
     contratoId: string,
     note: { tipo: NoteType; contenido: string; conceptos?: string[]; notaPadreId?: string | null },
-    fotos?: File[],
   ) => Promise<void>
   addEstimacion: (e: {
     contratoId: string
@@ -139,8 +160,8 @@ interface AppState {
     registroFotografico: number
     notasSoporte: number
     importeBruto: number
-    lineas?: Array<{ conceptoId: string; cantidadEjecutada: number; generadorDetalle?: string }>
-  }) => Promise<{ conceptosSugeridosTerminados: Array<{ id: string; clave: string }> }>
+    lineas?: Array<{ conceptoId: string; reporteIds: string[]; generadorDetalle?: string }>
+  }) => Promise<void>
   reviewEstimacion: (id: string, status: "aceptada" | "rechazada", observaciones: string) => Promise<{ advertenciaAvance?: string }>
   addConvenio: (
     c: {
@@ -200,6 +221,29 @@ interface AppState {
   reviewActivation: (contratoId: string, aprobado: boolean, observaciones: string) => Promise<void>
   /** Returns the set of GarantiaTipo values already registered for a contract (cannot add again) */
   garantiasTiposUsados: (contratoId: string) => Set<GarantiaTipo>
+
+  terminaciones: TerminacionContrato[]
+  finiquitos: Finiquito[]
+
+  terminarContrato: (contratoId: string, payload: TerminarContratoPayload) => Promise<void>
+  cargarActa: (contratoId: string, archivo: File, fechaFirma: string) => Promise<void>
+  emitirFiniquito: (contratoId: string, payload: EmitirFiniquitoPayload) => Promise<void>
+  notificarFiniquito: (contratoId: string) => Promise<void>
+  responderFiniquito: (contratoId: string, payload: ResponderFiniquitoPayload) => Promise<void>
+  cerrarFiniquito: (contratoId: string) => Promise<void>
+  resolverIncumplimiento: (incumplimientoId: string, contratoId: string) => Promise<void>
+
+  registrarReporteAvance: (
+    contratoId: string,
+    r: { conceptoId: string; fecha: string; cantidad: number; frenteUbicacion: string; reporteAnteriorId?: string },
+    fotografia: File,
+  ) => Promise<void>
+  revisarReporteAvance: (
+    contratoId: string,
+    reporteId: string,
+    status: "validado" | "rechazado",
+    observaciones: string,
+  ) => Promise<{ conceptoTerminado?: boolean }>
 }
 
 const AppContext = createContext<AppState | null>(null)
@@ -224,6 +268,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [garantias, setGarantias] = useState<Garantia[]>([])
   const [anticipos, setAnticipos] = useState<Anticipo[]>([])
   const [solicitudesActivacion, setSolicitudesActivacion] = useState<SolicitudActivacion[]>([])
+  const [terminaciones, setTerminaciones] = useState<TerminacionContrato[]>([])
+  const [finiquitos, setFiniquitos] = useState<Finiquito[]>([])
 
   async function loadPersonasYContratistas() {
     const [resContratistas, resEmpresasSup, resResidentes] = await Promise.allSettled([
@@ -267,6 +313,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const rest = prev.filter((s) => s.contratoId !== cId)
       return bundle.solicitudActivacion ? [...rest, bundle.solicitudActivacion] : rest
     })
+    setTerminaciones((prev) => {
+      const rest = prev.filter((t) => t.contratoId !== cId)
+      return bundle.terminacion ? [...rest, bundle.terminacion] : rest
+    })
+    setFiniquitos((prev) => {
+      const rest = prev.filter((f) => f.contratoId !== cId)
+      return bundle.finiquito ? [...rest, bundle.finiquito] : rest
+    })
   }
 
   async function refreshContrato(contratoId: string) {
@@ -289,6 +343,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setMinutas(bundles.flatMap((b) => b.minutas))
     setProgramasObra(bundles.map((b) => b.programaObra))
     setSolicitudesActivacion(bundles.flatMap((b) => (b.solicitudActivacion ? [b.solicitudActivacion] : [])))
+    setTerminaciones(bundles.flatMap((b) => (b.terminacion ? [b.terminacion] : [])))
+    setFiniquitos(bundles.flatMap((b) => (b.finiquito ? [b.finiquito] : [])))
     await loadPersonasYContratistas()
   }
 
@@ -338,6 +394,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setGarantias([])
     setAnticipos([])
     setSolicitudesActivacion([])
+    setTerminaciones([])
+    setFiniquitos([])
   }
 
   const addContract: AppState["addContract"] = async (c) => {
@@ -372,10 +430,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return nueva
   }
 
+  function notificarCuentaCreada(correo: string) {
+    toast.success(`Cuenta de acceso creada`, {
+      description: `Usuario: ${correo} · Contraseña temporal: demo123`,
+      duration: 8000,
+    })
+  }
+
   const addResidente: AppState["addResidente"] = async (p) => {
     const api = await createPersonaRequest(p)
     const nueva = toPersona(api)
     setResidentes((prev) => [...prev, nueva])
+    if (api.usuario_creado) notificarCuentaCreada(nueva.correo)
     return nueva
   }
 
@@ -388,6 +454,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ),
     )
     setSupervisores((prev) => [...prev, nueva])
+    if (api.usuario_creado) notificarCuentaCreada(nueva.correo)
     return nueva
   }
 
@@ -400,6 +467,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ),
     )
     setSuperintendentes((prev) => [...prev, nueva])
+    if (api.usuario_creado) notificarCuentaCreada(nueva.correo)
     return nueva
   }
 
@@ -432,7 +500,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await refreshContrato(contratoId)
   }
 
-  const addNote: AppState["addNote"] = async (contratoId, note, fotos) => {
+  const addNote: AppState["addNote"] = async (contratoId, note) => {
     const formData = new FormData()
     formData.append("tipo", note.tipo)
     formData.append("contenido", note.contenido)
@@ -442,15 +510,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (note.notaPadreId != null) {
       formData.append("nota_padre", note.notaPadreId)
     }
-    for (const foto of fotos ?? []) {
-      formData.append("fotos", foto)
-    }
     await addBitacoraNotaRequest(contratoId, formData)
     await refreshContrato(contratoId)
   }
 
   const addEstimacion: AppState["addEstimacion"] = async (e) => {
-    const resp = await createEstimacionRequest({
+    await createEstimacionRequest({
       contrato_id: e.contratoId,
       periodo_inicio: e.periodoInicio,
       periodo_fin: e.periodoFin,
@@ -461,17 +526,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       importe_bruto: e.importeBruto,
       lineas: e.lineas?.map((l) => ({
         concepto_id: parseInt(l.conceptoId),
-        cantidad_ejecutada: l.cantidadEjecutada,
+        reporte_ids: l.reporteIds.map((id) => parseInt(id)),
         generador_detalle: l.generadorDetalle,
       })),
     })
     await refreshContrato(e.contratoId)
-    return {
-      conceptosSugeridosTerminados: (resp.conceptos_sugeridos_terminados ?? []).map((c) => ({
-        id: String(c.id),
-        clave: c.clave,
-      })),
-    }
   }
 
   const reviewEstimacion: AppState["reviewEstimacion"] = async (id, status, observaciones) => {
@@ -610,6 +669,71 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await refreshContrato(a.contratoId)
   }
 
+  const terminarContrato: AppState["terminarContrato"] = async (contratoId, payload) => {
+    const api = await terminarContratoRequest(contratoId, payload)
+    applyBundle(adaptContractBundle(api))
+  }
+
+  const cargarActa: AppState["cargarActa"] = async (contratoId, archivo, fechaFirma) => {
+    const formData = new FormData()
+    formData.append("archivo", archivo)
+    formData.append("fecha_firma", fechaFirma)
+    const api = await cargarActaRequest(contratoId, formData)
+    applyBundle(adaptContractBundle(api))
+  }
+
+  const emitirFiniquito: AppState["emitirFiniquito"] = async (contratoId, payload) => {
+    const api = await emitirFiniquitoRequest(contratoId, payload)
+    applyBundle(adaptContractBundle(api))
+  }
+
+  const notificarFiniquito: AppState["notificarFiniquito"] = async (contratoId) => {
+    const api = await notificarFiniquitoRequest(contratoId)
+    applyBundle(adaptContractBundle(api))
+  }
+
+  const responderFiniquito: AppState["responderFiniquito"] = async (contratoId, payload) => {
+    const api = await responderFiniquitoRequest(contratoId, payload)
+    applyBundle(adaptContractBundle(api))
+  }
+
+  const cerrarFiniquito: AppState["cerrarFiniquito"] = async (contratoId) => {
+    const api = await cerrarFiniquitoRequest(contratoId)
+    applyBundle(adaptContractBundle(api))
+  }
+
+  const resolverIncumplimiento: AppState["resolverIncumplimiento"] = async (incumplimientoId, contratoId) => {
+    const api = await resolverIncumplimientoRequest(incumplimientoId)
+    setIncumplimientos((prev) =>
+      prev.map((i) => (i.id === String(api.id) ? { ...i, resuelto: true } : i))
+    )
+  }
+
+  const registrarReporteAvance: AppState["registrarReporteAvance"] = async (contratoId, r, fotografia) => {
+    const formData = new FormData()
+    formData.append("concepto_id", r.conceptoId)
+    formData.append("fecha", r.fecha)
+    formData.append("cantidad", String(r.cantidad))
+    formData.append("frente_ubicacion", r.frenteUbicacion)
+    formData.append("fotografia", fotografia)
+    if (r.reporteAnteriorId) {
+      formData.append("reporte_anterior", r.reporteAnteriorId)
+    }
+    await crearReporteAvanceRequest(formData)
+    await refreshContrato(contratoId)
+  }
+
+  const revisarReporteAvance: AppState["revisarReporteAvance"] = async (
+    contratoId,
+    reporteId,
+    status,
+    observaciones,
+  ) => {
+    const resp = await revisarReporteAvanceRequest(reporteId, status, observaciones)
+    await refreshContrato(contratoId)
+    return { conceptoTerminado: resp.concepto_terminado }
+  }
+
   const requestActivation: AppState["requestActivation"] = async (contratoId) => {
     await solicitarActivacionRequest(contratoId)
     await refreshContrato(contratoId)
@@ -671,6 +795,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestActivation,
     reviewActivation,
     garantiasTiposUsados,
+    terminaciones,
+    finiquitos,
+    terminarContrato,
+    cargarActa,
+    emitirFiniquito,
+    notificarFiniquito,
+    responderFiniquito,
+    cerrarFiniquito,
+    resolverIncumplimiento,
+    registrarReporteAvance,
+    revisarReporteAvance,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
@@ -701,6 +836,15 @@ export function can(role: Role | undefined, action: string): boolean {
     "incumplimiento.registrar": ["residente"],
     "minuta.registrar": ["residente", "superintendente", "supervision"],
     "garantia.registrar": ["superintendente"],
+    "incumplimiento.resolver": ["residente"],
+    "cierre.terminar": ["residente"],
+    "cierre.cargar-acta": ["residente"],
+    "finiquito.emitir": ["residente"],
+    "finiquito.notificar": ["residente"],
+    "finiquito.responder": ["residente", "superintendente"],
+    "finiquito.cerrar": ["residente"],
+    "avance_concepto.registrar": ["superintendente"],
+    "avance_concepto.validar": ["supervision"],
   }
   return matrix[action]?.includes(role) ?? false
 }

@@ -47,10 +47,22 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
 ]
 
 export function EstimacionesPanel({ contract }: { contract: Contract }) {
-  const { estimaciones, anticipos, convenios, user } = useApp()
+  const { estimaciones, anticipos, convenios, user, bitacoras, addNote } = useApp()
 
   // Anticipo del contrato
   const anticipo = anticipos.find((a) => a.contratoId === contract.id) ?? null
+
+  // Conceptos que ya llegaron a "Terminado" (al validarse sus reportes de avance)
+  // y aún no tienen una nota de bitácora de tipo "concepto_terminado" que los cubra.
+  const bitacora = bitacoras.find((b) => b.contratoId === contract.id)
+  const conceptosTerminadosSinNota = useMemo(() => {
+    const notificados = new Set(
+      (bitacora?.notas ?? [])
+        .filter((n) => n.tipo === "concepto_terminado")
+        .flatMap((n) => (n.conceptos ?? []).map((c) => c.id)),
+    )
+    return contract.catalogoConceptos.filter((c) => c.estado === "terminado" && !notificados.has(c.id))
+  }, [bitacora, contract.catalogoConceptos])
 
   // ── HU009: filtros ───────────────────────────────────────────────────────
   const [filterStatus, setFilterStatus] = useState<string>("todos")
@@ -141,6 +153,14 @@ export function EstimacionesPanel({ contract }: { contract: Contract }) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {user?.role === "residente" && conceptosTerminadosSinNota.length > 0 && (
+        <ConceptosTerminadosBanner
+          contratoId={contract.id}
+          conceptos={conceptosTerminadosSinNota}
+          addNote={addNote}
+        />
       )}
 
       {/* ── HU009: barra de filtros ─────────────────────────────────────── */}
@@ -250,6 +270,53 @@ export function EstimacionesPanel({ contract }: { contract: Contract }) {
         )}
       </div>
     </div>
+  )
+}
+
+function ConceptosTerminadosBanner({
+  contratoId,
+  conceptos,
+  addNote,
+}: {
+  contratoId: string
+  conceptos: Contract["catalogoConceptos"]
+  addNote: ReturnType<typeof useApp>["addNote"]
+}) {
+  const [registrando, setRegistrando] = useState(false)
+
+  async function handleRegistrar() {
+    setRegistrando(true)
+    try {
+      const claves = conceptos.map((c) => c.clave).join(", ")
+      await addNote(contratoId, {
+        tipo: "concepto_terminado",
+        contenido: `Se hace constar la terminación al 100% de los siguientes conceptos: ${claves}.`,
+        conceptos: conceptos.map((c) => c.id),
+      })
+      toast.success("Nota de 'Concepto Terminado' registrada en bitácora.")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo registrar la nota")
+    } finally {
+      setRegistrando(false)
+    }
+  }
+
+  return (
+    <Card className="border-emerald-300 dark:border-emerald-800">
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div>
+          <p className="text-sm font-medium text-foreground">
+            {conceptos.length} concepto(s) alcanzaron el 100% de su cantidad autorizada
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {conceptos.map((c) => c.clave).join(", ")} — registra la nota de bitácora correspondiente.
+          </p>
+        </div>
+        <Button size="sm" disabled={registrando} onClick={handleRegistrar}>
+          {registrando ? "Registrando..." : "Registrar nota en bitácora"}
+        </Button>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -514,14 +581,23 @@ function NuevaEstimacionDialog({
   contract: Contract
   anticipo: Anticipo | null
 }) {
-  const { addEstimacion, addNote, estimaciones, user } = useApp()
+  const { addEstimacion, estimaciones } = useApp()
   const [open, setOpen] = useState(false)
   const [importeBruto, setImporteBruto] = useState("")
-  const [lineas, setLineas] = useState<Record<string, string>>({})
+  const [lineas, setLineas] = useState<Record<string, string[]>>({})
   const [submitting, setSubmitting] = useState(false)
-  const [sugeridos, setSugeridos] = useState<Array<{ id: string; clave: string }> | null>(null)
-  const [notaContenido, setNotaContenido] = useState("")
-  const [registrandoNota, setRegistrandoNota] = useState(false)
+
+  // Reportes de avance validados y aún no incluidos en ninguna estimación, agrupados por concepto.
+  const reportesDisponiblesPorConcepto = useMemo(() => {
+    const map = new Map<string, Contract["reportesAvance"]>()
+    for (const r of contract.reportesAvance) {
+      if (r.status !== "validado" || r.usadoEnEstimacionId) continue
+      const lista = map.get(r.conceptoId) ?? []
+      lista.push(r)
+      map.set(r.conceptoId, lista)
+    }
+    return map
+  }, [contract.reportesAvance])
 
   // Pre-calcular rango del siguiente mes de obra
   const periodoPrelleno = useMemo(() => {
@@ -540,26 +616,16 @@ function NuevaEstimacionDialog({
   function reset() {
     setImporteBruto("")
     setLineas({})
-    setSugeridos(null)
-    setNotaContenido("")
   }
 
-  async function handleRegistrarNota() {
-    if (!sugeridos) return
-    setRegistrandoNota(true)
-    try {
-      await addNote(contract.id, {
-        tipo: "concepto_terminado",
-        contenido: notaContenido || `Se hace constar la terminación al 100% de los siguientes conceptos: ${sugeridos.map((c) => c.clave).join(", ")}.`,
-        conceptos: sugeridos.map((c) => c.id),
-      })
-      toast.success("Nota de 'Concepto Terminado' registrada en bitácora.")
-      setOpen(false)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No se pudo registrar la nota")
-    } finally {
-      setRegistrandoNota(false)
-    }
+  function toggleReporte(conceptoId: string, reporteId: string) {
+    setLineas((prev) => {
+      const actuales = prev[conceptoId] ?? []
+      const nuevas = actuales.includes(reporteId)
+        ? actuales.filter((id) => id !== reporteId)
+        : [...actuales, reporteId]
+      return { ...prev, [conceptoId]: nuevas }
+    })
   }
 
   return (
@@ -571,57 +637,6 @@ function NuevaEstimacionDialog({
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        {sugeridos ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>Conceptos terminados detectados</DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              Con esta estimación los siguientes conceptos han alcanzado el 100% de su cantidad
-              contratada. Como Residente de Obra, puedes registrar una nota de bitácora para
-              dejar constancia.
-            </p>
-            <ul className="flex flex-wrap gap-2">
-              {sugeridos.map((c) => (
-                <li
-                  key={c.id}
-                  className="rounded bg-muted px-2 py-0.5 text-xs font-medium"
-                >
-                  {c.clave}
-                </li>
-              ))}
-            </ul>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="notaContenido">Contenido de la nota</Label>
-              <Textarea
-                id="notaContenido"
-                rows={3}
-                value={notaContenido}
-                onChange={(e) => setNotaContenido(e.target.value)}
-              />
-            </div>
-            <DialogFooter className="gap-2 sm:gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  toast.success("Estimación registrada. Pendiente de revisión.")
-                  setOpen(false)
-                }}
-              >
-                Omitir nota
-              </Button>
-              <Button
-                type="button"
-                onClick={handleRegistrarNota}
-                disabled={registrandoNota}
-              >
-                {registrandoNota ? "Registrando..." : "Registrar nota en bitácora"}
-              </Button>
-            </DialogFooter>
-          </>
-        ) : (
-          <>
         <DialogHeader>
           <DialogTitle>Registrar estimación de obra</DialogTitle>
         </DialogHeader>
@@ -629,15 +644,12 @@ function NuevaEstimacionDialog({
           onSubmit={async (e) => {
             e.preventDefault()
             const fd = new FormData(e.currentTarget)
-            const lineasPayload = contract.catalogoConceptos
-              .filter((c) => lineas[c.id] && Number(lineas[c.id]) > 0)
-              .map((c) => ({
-                conceptoId: c.id,
-                cantidadEjecutada: Number(lineas[c.id]),
-              }))
+            const lineasPayload = Object.entries(lineas)
+              .filter(([, reporteIds]) => reporteIds.length > 0)
+              .map(([conceptoId, reporteIds]) => ({ conceptoId, reporteIds }))
             setSubmitting(true)
             try {
-              const result = await addEstimacion({
+              await addEstimacion({
                 contratoId: contract.id,
                 periodoInicio: String(fd.get("periodoInicio")),
                 periodoFin: String(fd.get("periodoFin")),
@@ -648,16 +660,8 @@ function NuevaEstimacionDialog({
                 notasSoporte: Number(fd.get("notas")),
                 lineas: lineasPayload.length > 0 ? lineasPayload : undefined,
               })
-              if (result.conceptosSugeridosTerminados.length > 0 && user?.role === "residente") {
-                const claves = result.conceptosSugeridosTerminados.map((c) => c.clave).join(", ")
-                setSugeridos(result.conceptosSugeridosTerminados)
-                setNotaContenido(
-                  `Se hace constar la terminación al 100% de los siguientes conceptos: ${claves}.`
-                )
-              } else {
-                toast.success("Estimación registrada. Pendiente de revisión.")
-                setOpen(false)
-              }
+              toast.success("Estimación registrada. Pendiente de revisión.")
+              setOpen(false)
             } catch (err) {
               toast.error(err instanceof Error ? err.message : "No se pudo registrar la estimación")
             } finally {
@@ -727,53 +731,63 @@ function NuevaEstimacionDialog({
             </div>
           )}
 
-          {/* Cantidades ejecutadas por concepto */}
-          {contract.catalogoConceptos.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <Label>Cantidades ejecutadas por concepto</Label>
-              <p className="text-xs text-muted-foreground">
-                Ingresa solo los conceptos con avance en este periodo. Dejar en blanco equivale a cero.
+          {/* Reportes de avance validados, disponibles para incluir en esta estimación */}
+          <div className="flex flex-col gap-2">
+            <Label>Reportes de avance validados por concepto</Label>
+            <p className="text-xs text-muted-foreground">
+              Solo los reportes de avance ya validados por Supervisión pueden incluirse. Selecciona
+              los que correspondan al periodo de esta estimación.
+            </p>
+            {reportesDisponiblesPorConcepto.size === 0 ? (
+              <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                No hay reportes de avance validados y disponibles para este contrato.
               </p>
-              <div className="max-h-52 overflow-y-auto rounded-md border border-border">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-muted">
-                    <tr>
-                      <th className="px-2 py-1.5 text-left font-medium">Clave</th>
-                      <th className="px-2 py-1.5 text-left font-medium">Descripción</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Contratado</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Ejecutado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {contract.catalogoConceptos.map((c) => (
-                      <tr key={c.id} className="border-t border-border">
-                        <td className="px-2 py-1 font-medium">{c.clave}</td>
-                        <td className="px-2 py-1 max-w-[14rem] truncate text-muted-foreground">
-                          {c.descripcion}
-                        </td>
-                        <td className="px-2 py-1 text-right tabular-nums">
-                          {c.cantidad.toLocaleString("es-MX")} {c.unidad}
-                        </td>
-                        <td className="px-2 py-1">
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0"
-                            className="h-6 w-24 text-xs text-right ml-auto"
-                            value={lineas[c.id] ?? ""}
-                            onChange={(ev) =>
-                              setLineas((prev) => ({ ...prev, [c.id]: ev.target.value }))
-                            }
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            ) : (
+              <div className="max-h-64 overflow-y-auto rounded-md border border-border">
+                {contract.catalogoConceptos
+                  .filter((c) => reportesDisponiblesPorConcepto.has(c.id))
+                  .map((c) => {
+                    const reportes = reportesDisponiblesPorConcepto.get(c.id) ?? []
+                    const seleccionados = lineas[c.id] ?? []
+                    const sumaSeleccionada = reportes
+                      .filter((r) => seleccionados.includes(r.id))
+                      .reduce((s, r) => s + r.cantidad, 0)
+                    return (
+                      <div key={c.id} className="border-b border-border p-2 last:border-0">
+                        <div className="mb-1 flex items-center justify-between text-xs">
+                          <span className="font-medium">
+                            {c.clave} — {c.descripcion}
+                          </span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {sumaSeleccionada.toLocaleString("es-MX")} / {c.cantidad.toLocaleString("es-MX")} {c.unidad}
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {reportes.map((r) => (
+                            <label
+                              key={r.id}
+                              className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted/40"
+                            >
+                              <input
+                                type="checkbox"
+                                className="h-3.5 w-3.5"
+                                checked={seleccionados.includes(r.id)}
+                                onChange={() => toggleReporte(c.id, r.id)}
+                              />
+                              <span>{formatDate(r.fecha)}</span>
+                              <span className="tabular-nums">
+                                {r.cantidad.toLocaleString("es-MX")} {c.unidad}
+                              </span>
+                              <span className="truncate text-muted-foreground">{r.frenteUbicacion}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="generadores">Notas / descripción adicional</Label>
@@ -795,8 +809,6 @@ function NuevaEstimacionDialog({
             </Button>
           </DialogFooter>
         </form>
-          </>
-        )}
       </DialogContent>
     </Dialog>
   )

@@ -1,11 +1,14 @@
 import type {
+  ActaEntregaRecepcion,
   Anticipo,
   AvanceConcepto,
   AvanceDiario,
   AvanceTipo,
   Bitacora,
   BitacoraNote,
+  CierreStatus,
   ConceptoCatalogo,
+  ConceptoEstado,
   ConceptoPrograma,
   Contract,
   ContractDocument,
@@ -20,6 +23,8 @@ import type {
   EmpresaSupervision,
   EstimacionStatus,
   Estimacion,
+  Finiquito,
+  FiniquitoStatus,
   LineaEstimacion,
   AlertaStatus,
   Garantia,
@@ -32,9 +37,13 @@ import type {
   OrdenPago,
   Persona,
   ProgramaObra,
+  ReporteAvanceConcepto,
+  ReporteAvanceStatus,
   Role,
   SolicitudActivacion,
   SolicitudActivacionStatus,
+  TerminacionContrato,
+  TerminacionTipo,
 } from "./types"
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api"
@@ -231,6 +240,7 @@ export interface ApiPersona {
   correo: string
   empresa_contratista: number | null
   empresa_supervision: number | null
+  usuario_creado?: boolean
 }
 
 export interface ApiConceptoCatalogo {
@@ -242,6 +252,7 @@ export interface ApiConceptoCatalogo {
   precio_unitario: string
   total: string
   capitulo: string
+  estado: string
 }
 
 export interface ApiContractDocument {
@@ -358,8 +369,25 @@ export interface ApiEstimacion {
   importe_neto: string
   orden_pago: ApiOrdenPago | null
   lineas: ApiLineaEstimacion[]
-  conceptos_sugeridos_terminados?: Array<{ id: number; clave: string }>
   advertencia_avance?: string
+}
+
+export interface ApiReporteAvanceConcepto {
+  id: number
+  concepto: ApiConceptoCatalogo
+  reporte_anterior: number | null
+  fecha: string
+  cantidad: string
+  frente_ubicacion: string
+  fotografia: string
+  status: string
+  observaciones: string
+  usado_en_estimacion: number | null
+  creado_por: string | null
+  fecha_creacion: string
+  revisado_por: string | null
+  fecha_revision: string | null
+  concepto_terminado?: boolean
 }
 
 export interface ApiGarantia {
@@ -445,6 +473,7 @@ export interface ApiIncumplimiento {
   tipo: string
   descripcion: string
   evidencia_ref: string
+  resuelto: boolean
   autor: string | null
   fecha: string
 }
@@ -459,6 +488,47 @@ export interface ApiMinuta {
   compromisos: string
   autor: string | null
   fecha: string
+}
+
+export interface ApiActaEntregaRecepcion {
+  id: number
+  fecha_firma: string
+  archivo: string
+  registrado_por: string | null
+  fecha_registro: string
+}
+
+export interface ApiTerminacionContrato {
+  id: number
+  tipo: string
+  fecha_terminacion: string
+  avance_fisico_final: string
+  nota_cierre: string
+  motivo: string
+  registrado_por: string | null
+  fecha_registro: string
+  cierre_status: string
+  acta: ApiActaEntregaRecepcion | null
+}
+
+export interface ApiFiniquito {
+  id: number
+  estimaciones_pendientes: string
+  ajuste_precios: string
+  otros_creditos_contratista: string
+  saldo_anticipo_no_amortizado: string
+  penas_convencionales: string
+  deducibles: string
+  total_creditos_contratista: string
+  total_creditos_dependencia: string
+  saldo_neto: string
+  status: string
+  fecha_notificacion: string | null
+  fecha_limite_respuesta: string | null
+  conformidad: boolean | null
+  motivo_inconformidad: string
+  emitido_por: string | null
+  fecha_creacion: string
 }
 
 export interface ApiMesConcepto {
@@ -519,6 +589,9 @@ export interface ApiContract {
   incumplimientos: ApiIncumplimiento[]
   minutas: ApiMinuta[]
   programa_obra: ApiProgramaObra | null
+  terminacion: ApiTerminacionContrato | null
+  finiquito: ApiFiniquito | null
+  reportes_avance: ApiReporteAvanceConcepto[]
   acumulado_convenios?: ApiAcumuladoConvenios
 }
 
@@ -596,6 +669,27 @@ export function toConceptoCatalogo(a: ApiConceptoCatalogo): ConceptoCatalogo {
     precioUnitario: num(a.precio_unitario),
     total: num(a.total),
     capitulo: a.capitulo || undefined,
+    estado: a.estado as ConceptoEstado,
+  }
+}
+
+export function toReporteAvanceConcepto(a: ApiReporteAvanceConcepto): ReporteAvanceConcepto {
+  return {
+    id: strId(a.id),
+    conceptoId: strId(a.concepto.id),
+    concepto: toConceptoCatalogo(a.concepto),
+    reporteAnteriorId: a.reporte_anterior != null ? strId(a.reporte_anterior) : null,
+    fecha: a.fecha,
+    cantidad: num(a.cantidad),
+    frenteUbicacion: a.frente_ubicacion,
+    fotografia: a.fotografia,
+    status: a.status as ReporteAvanceStatus,
+    observaciones: a.observaciones,
+    usadoEnEstimacionId: a.usado_en_estimacion != null ? strId(a.usado_en_estimacion) : null,
+    creadoPor: a.creado_por ?? "",
+    fechaCreacion: a.fecha_creacion,
+    revisadoPor: a.revisado_por,
+    fechaRevision: a.fecha_revision,
   }
 }
 
@@ -700,10 +794,6 @@ export function toEstimacion(a: ApiEstimacion): Estimacion {
     iva: num(a.iva),
     importeNeto: num(a.importe_neto),
     lineas: (a.lineas ?? []).map(toLineaEstimacion),
-    conceptosSugeridosTerminados: (a.conceptos_sugeridos_terminados ?? []).map((c) => ({
-      id: strId(c.id),
-      clave: c.clave,
-    })),
   }
 }
 
@@ -795,6 +885,7 @@ export function toConvenio(a: ApiConvenio): Convenio {
           precioUnitario: num(x.precio_unitario),
           total: num(x.cantidad) * num(x.precio_unitario),
           capitulo: x.capitulo,
+          estado: "en_proceso" as const,
         }))
       : undefined,
   }
@@ -819,6 +910,7 @@ export function toIncumplimiento(a: ApiIncumplimiento): Incumplimiento {
     tipo: a.tipo as IncumplimientoTipo,
     descripcion: a.descripcion,
     evidenciaRef: a.evidencia_ref,
+    resuelto: a.resuelto,
     autor: a.autor ?? "",
     fecha: a.fecha,
   }
@@ -835,6 +927,55 @@ export function toMinuta(a: ApiMinuta): Minuta {
     compromisos: a.compromisos,
     autor: a.autor ?? "",
     fecha: a.fecha,
+  }
+}
+
+export function toActaEntregaRecepcion(a: ApiActaEntregaRecepcion): ActaEntregaRecepcion {
+  return {
+    id: strId(a.id),
+    fechaFirma: a.fecha_firma,
+    archivo: a.archivo,
+    registradoPor: a.registrado_por ?? "",
+    fechaRegistro: a.fecha_registro,
+  }
+}
+
+export function toTerminacionContrato(a: ApiTerminacionContrato, contratoId: string): TerminacionContrato {
+  return {
+    id: strId(a.id),
+    contratoId,
+    tipo: a.tipo as TerminacionTipo,
+    fechaTerminacion: a.fecha_terminacion,
+    avanceFisicoFinal: num(a.avance_fisico_final),
+    notaCierre: a.nota_cierre,
+    motivo: a.motivo,
+    registradoPor: a.registrado_por ?? "",
+    fechaRegistro: a.fecha_registro,
+    cierreStatus: a.cierre_status as CierreStatus,
+    acta: a.acta ? toActaEntregaRecepcion(a.acta) : null,
+  }
+}
+
+export function toFiniquito(a: ApiFiniquito, contratoId: string): Finiquito {
+  return {
+    id: strId(a.id),
+    contratoId,
+    estimacionesPendientes: num(a.estimaciones_pendientes),
+    ajustePrecios: num(a.ajuste_precios),
+    otrosCreditosContratista: num(a.otros_creditos_contratista),
+    saldoAnticipoNoAmortizado: num(a.saldo_anticipo_no_amortizado),
+    penasConvencionales: num(a.penas_convencionales),
+    deducibles: num(a.deducibles),
+    totalCreditosContratista: num(a.total_creditos_contratista),
+    totalCreditosDependencia: num(a.total_creditos_dependencia),
+    saldoNeto: num(a.saldo_neto),
+    status: a.status as FiniquitoStatus,
+    fechaNotificacion: a.fecha_notificacion,
+    fechaLimiteRespuesta: a.fecha_limite_respuesta,
+    conformidad: a.conformidad,
+    motivoInconformidad: a.motivo_inconformidad,
+    emitidoPor: a.emitido_por ?? "",
+    fechaCreacion: a.fecha_creacion,
   }
 }
 
@@ -875,6 +1016,7 @@ export function toContract(a: ApiContract): Contract {
     documentos: a.documentos.map(toContractDocument),
     catalogoConceptos: a.catalogo_conceptos.map(toConceptoCatalogo),
     versiones: a.versiones.map(toContractVersion),
+    reportesAvance: a.reportes_avance.map(toReporteAvanceConcepto),
     fechaActivacion: a.fecha_activacion ?? undefined,
     acumuladoConvenios: a.acumulado_convenios
       ? {
@@ -903,6 +1045,8 @@ export interface ContractBundle {
   minutas: Minuta[]
   programaObra: ProgramaObra
   solicitudActivacion: SolicitudActivacion | null
+  terminacion: TerminacionContrato | null
+  finiquito: Finiquito | null
 }
 
 export function adaptContractBundle(a: ApiContract): ContractBundle {
@@ -920,6 +1064,8 @@ export function adaptContractBundle(a: ApiContract): ContractBundle {
     minutas: a.minutas.map(toMinuta),
     programaObra: toProgramaObra(a.programa_obra, contratoId),
     solicitudActivacion: a.solicitud_activacion ? toSolicitudActivacion(a.solicitud_activacion, contratoId) : null,
+    terminacion: a.terminacion ? toTerminacionContrato(a.terminacion, contratoId) : null,
+    finiquito: a.finiquito ? toFiniquito(a.finiquito, contratoId) : null,
   }
 }
 
@@ -1067,7 +1213,7 @@ export interface CreateEstimacionPayload {
   registro_fotografico: number
   notas_soporte: number
   importe_bruto: number
-  lineas?: Array<{ concepto_id: number; cantidad_ejecutada: number; generador_detalle?: string }>
+  lineas?: Array<{ concepto_id: number; reporte_ids: number[]; generador_detalle?: string }>
 }
 
 export function createEstimacionRequest(payload: CreateEstimacionPayload) {
@@ -1080,6 +1226,23 @@ export function revisarEstimacionRequest(estimacionId: string, status: "aceptada
 
 export function dispersarPagoRequest(ordenId: string) {
   return apiPost<ApiOrdenPago>(`/contracts/ordenes-pago/${ordenId}/dispersar/`)
+}
+
+// ── Endpoints: reportes de avance por concepto ───────────────────────────────
+
+export function crearReporteAvanceRequest(formData: FormData) {
+  return apiPost<ApiReporteAvanceConcepto>("/contracts/reportes-avance/", formData)
+}
+
+export function revisarReporteAvanceRequest(
+  reporteId: string,
+  status: "validado" | "rechazado",
+  observaciones: string,
+) {
+  return apiPost<ApiReporteAvanceConcepto>(
+    `/contracts/reportes-avance/${reporteId}/revisar/`,
+    { status, observaciones },
+  )
 }
 
 // ── Endpoints: garantías y anticipos ─────────────────────────────────────────
@@ -1150,4 +1313,53 @@ export interface CreateMinutaPayload {
 
 export function createMinutaRequest(payload: CreateMinutaPayload) {
   return apiPost<ApiMinuta>("/contracts/minutas/", payload)
+}
+
+export interface TerminarContratoPayload {
+  tipo: string
+  fecha_terminacion: string
+  avance_fisico_final: number
+  nota_cierre: string
+  motivo?: string
+}
+
+export function terminarContratoRequest(contratoId: string, payload: TerminarContratoPayload) {
+  return apiPost<ApiContract>(`/contracts/contratos/${contratoId}/terminar/`, payload)
+}
+
+export function cargarActaRequest(contratoId: string, formData: FormData) {
+  return apiPost<ApiContract>(`/contracts/contratos/${contratoId}/cargar-acta/`, formData)
+}
+
+export interface EmitirFiniquitoPayload {
+  estimaciones_pendientes: number
+  ajuste_precios: number
+  otros_creditos_contratista: number
+  penas_convencionales: number
+  deducibles: number
+}
+
+export function emitirFiniquitoRequest(contratoId: string, payload: EmitirFiniquitoPayload) {
+  return apiPost<ApiContract>(`/contracts/contratos/${contratoId}/finiquito/`, payload)
+}
+
+export function notificarFiniquitoRequest(contratoId: string) {
+  return apiPost<ApiContract>(`/contracts/contratos/${contratoId}/finiquito/notificar/`)
+}
+
+export interface ResponderFiniquitoPayload {
+  conformidad: boolean
+  motivo_inconformidad?: string
+}
+
+export function responderFiniquitoRequest(contratoId: string, payload: ResponderFiniquitoPayload) {
+  return apiPost<ApiContract>(`/contracts/contratos/${contratoId}/finiquito/responder/`, payload)
+}
+
+export function cerrarFiniquitoRequest(contratoId: string) {
+  return apiPost<ApiContract>(`/contracts/contratos/${contratoId}/finiquito/cerrar/`)
+}
+
+export function resolverIncumplimientoRequest(incumplimientoId: string) {
+  return apiPost<ApiIncumplimiento>(`/contracts/incumplimientos/${incumplimientoId}/resolver/`)
 }

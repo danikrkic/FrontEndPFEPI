@@ -4,6 +4,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from .models import (
+    ActaEntregaRecepcion,
     Anticipo,
     AvanceDiario,
     Bitacora,
@@ -18,6 +19,7 @@ from .models import (
     ConvenioDocumento,
     EmpresaSupervision,
     Estimacion,
+    Finiquito,
     Garantia,
     Incumplimiento,
     LineaEstimacion,
@@ -25,9 +27,10 @@ from .models import (
     OrdenPago,
     Persona,
     ProgramaObra,
+    ReporteAvanceConcepto,
     SolicitudActivacion,
+    TerminacionContrato,
     calcular_garantia_status,
-    sugerir_notas_concepto_terminado,
 )
 
 
@@ -71,7 +74,9 @@ class ConceptoCatalogoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ConceptoCatalogo
-        fields = ["id", "clave", "descripcion", "unidad", "cantidad", "precio_unitario", "total", "capitulo"]
+        fields = [
+            "id", "clave", "descripcion", "unidad", "cantidad", "precio_unitario", "total", "capitulo", "estado",
+        ]
 
 
 class ContractDocumentSerializer(serializers.ModelSerializer):
@@ -196,7 +201,7 @@ class OrdenPagoSerializer(serializers.ModelSerializer):
 
 
 class LineaEstimacionSerializer(serializers.ModelSerializer):
-    concepto_id = serializers.IntegerField(source="concepto_id", read_only=True)
+    concepto_id = serializers.IntegerField(read_only=True)
     clave = serializers.CharField(source="concepto.clave", read_only=True)
     descripcion = serializers.CharField(source="concepto.descripcion", read_only=True)
     unidad = serializers.CharField(source="concepto.unidad", read_only=True)
@@ -230,8 +235,41 @@ class LineaEstimacionInputSerializer(serializers.Serializer):
     concepto_id = serializers.PrimaryKeyRelatedField(
         queryset=ConceptoCatalogo.objects.all(), source="concepto"
     )
-    cantidad_ejecutada = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
+    reporte_ids = serializers.PrimaryKeyRelatedField(
+        queryset=ReporteAvanceConcepto.objects.all(), many=True
+    )
     generador_detalle = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class ReporteAvanceConceptoSerializer(serializers.ModelSerializer):
+    concepto = ConceptoCatalogoSerializer(read_only=True)
+    concepto_id = serializers.PrimaryKeyRelatedField(
+        queryset=ConceptoCatalogo.objects.all(), source="concepto", write_only=True
+    )
+    reporte_anterior = serializers.PrimaryKeyRelatedField(
+        queryset=ReporteAvanceConcepto.objects.all(), required=False, allow_null=True
+    )
+    creado_por = serializers.SerializerMethodField()
+    revisado_por = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ReporteAvanceConcepto
+        fields = [
+            "id", "concepto", "concepto_id", "reporte_anterior", "fecha", "cantidad",
+            "frente_ubicacion", "fotografia", "status", "observaciones",
+            "usado_en_estimacion", "creado_por", "fecha_creacion",
+            "revisado_por", "fecha_revision",
+        ]
+        read_only_fields = [
+            "status", "observaciones", "usado_en_estimacion", "fecha_creacion",
+            "fecha_revision",
+        ]
+
+    def get_creado_por(self, obj):
+        return obj.creado_por.get_full_name() if obj.creado_por else None
+
+    def get_revisado_por(self, obj):
+        return obj.revisado_por.get_full_name() if obj.revisado_por else None
 
 
 class EstimacionSerializer(serializers.ModelSerializer):
@@ -243,7 +281,6 @@ class EstimacionSerializer(serializers.ModelSerializer):
     creada_por_id = serializers.IntegerField(read_only=True, allow_null=True)
     orden_pago = OrdenPagoSerializer(read_only=True, default=None)
     lineas = LineaEstimacionSerializer(many=True, read_only=True)
-    conceptos_sugeridos_terminados = serializers.SerializerMethodField()
 
     class Meta:
         model = Estimacion
@@ -270,7 +307,6 @@ class EstimacionSerializer(serializers.ModelSerializer):
             "importe_neto",
             "orden_pago",
             "lineas",
-            "conceptos_sugeridos_terminados",
         ]
         read_only_fields = [
             "numero",
@@ -284,9 +320,6 @@ class EstimacionSerializer(serializers.ModelSerializer):
 
     def get_creada_por(self, obj):
         return obj.creada_por.get_full_name() if obj.creada_por else None
-
-    def get_conceptos_sugeridos_terminados(self, obj):
-        return [{"id": c.id, "clave": c.clave} for c in sugerir_notas_concepto_terminado(obj)]
 
 
 class GarantiaSerializer(serializers.ModelSerializer):
@@ -455,7 +488,7 @@ class IncumplimientoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Incumplimiento
-        fields = ["id", "contrato", "contrato_id", "tipo", "descripcion", "evidencia_ref", "autor", "fecha"]
+        fields = ["id", "contrato", "contrato_id", "tipo", "descripcion", "evidencia_ref", "autor", "fecha", "resuelto"]
         read_only_fields = ["fecha"]
 
     def get_autor(self, obj):
@@ -487,6 +520,60 @@ class MinutaSerializer(serializers.ModelSerializer):
 
     def get_autor(self, obj):
         return obj.autor.get_full_name() if obj.autor else None
+
+
+class ActaEntregaRecepcionSerializer(serializers.ModelSerializer):
+    registrado_por = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ActaEntregaRecepcion
+        fields = ["id", "fecha_firma", "archivo", "registrado_por", "fecha_registro"]
+        read_only_fields = ["fecha_registro"]
+
+    def get_registrado_por(self, obj):
+        return obj.registrado_por.get_full_name() if obj.registrado_por else None
+
+
+class TerminacionContratoSerializer(serializers.ModelSerializer):
+    registrado_por = serializers.SerializerMethodField()
+    acta = ActaEntregaRecepcionSerializer(read_only=True, default=None)
+
+    class Meta:
+        model = TerminacionContrato
+        fields = [
+            "id", "tipo", "fecha_terminacion", "avance_fisico_final",
+            "nota_cierre", "motivo", "registrado_por", "fecha_registro",
+            "cierre_status", "acta",
+        ]
+        read_only_fields = ["fecha_registro", "cierre_status"]
+
+    def get_registrado_por(self, obj):
+        return obj.registrado_por.get_full_name() if obj.registrado_por else None
+
+
+class FiniquitoSerializer(serializers.ModelSerializer):
+    emitido_por = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Finiquito
+        fields = [
+            "id",
+            "estimaciones_pendientes", "ajuste_precios", "otros_creditos_contratista",
+            "saldo_anticipo_no_amortizado", "penas_convencionales", "deducibles",
+            "total_creditos_contratista", "total_creditos_dependencia", "saldo_neto",
+            "status", "fecha_notificacion", "fecha_limite_respuesta",
+            "conformidad", "motivo_inconformidad",
+            "emitido_por", "fecha_creacion",
+        ]
+        read_only_fields = [
+            "saldo_anticipo_no_amortizado",
+            "total_creditos_contratista", "total_creditos_dependencia", "saldo_neto",
+            "status", "fecha_notificacion", "fecha_limite_respuesta",
+            "conformidad", "fecha_creacion",
+        ]
+
+    def get_emitido_por(self, obj):
+        return obj.emitido_por.get_full_name() if obj.emitido_por else None
 
 
 class MesConceptoSerializer(serializers.Serializer):
@@ -543,6 +630,9 @@ class ContractSerializer(serializers.ModelSerializer):
     incumplimientos = IncumplimientoSerializer(many=True, read_only=True)
     minutas = MinutaSerializer(many=True, read_only=True)
     programa_obra = ProgramaObraSerializer(read_only=True, default=None)
+    terminacion = TerminacionContratoSerializer(read_only=True, default=None)
+    finiquito = FiniquitoSerializer(read_only=True, default=None)
+    reportes_avance = serializers.SerializerMethodField()
 
     class Meta:
         model = Contract
@@ -585,12 +675,22 @@ class ContractSerializer(serializers.ModelSerializer):
             "incumplimientos",
             "minutas",
             "programa_obra",
+            "terminacion",
+            "finiquito",
+            "reportes_avance",
             "acumulado_convenios",
         ]
         read_only_fields = [
             "monto_original", "plazo_dias_original", "acumulado_convenios",
             "status", "version", "avance_programado", "avance_real", "fecha_activacion", "fecha_termino",
+            "terminacion", "finiquito", "reportes_avance",
         ]
+
+    def get_reportes_avance(self, obj):
+        reportes = ReporteAvanceConcepto.objects.filter(concepto__contrato=obj).select_related(
+            "concepto", "creado_por", "revisado_por", "reporte_anterior"
+        )
+        return ReporteAvanceConceptoSerializer(reportes, many=True, context=self.context).data
 
     def validate(self, data):
         fecha_inicio = data.get("fecha_inicio", getattr(self.instance, "fecha_inicio", None))

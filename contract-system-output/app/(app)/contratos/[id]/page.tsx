@@ -21,6 +21,8 @@ import { VersionesPanel } from "@/components/contracts/versiones-panel"
 import { ProgramaObra } from "@/components/contracts/programa-obra"
 import { GarantiasPanel } from "@/components/contracts/garantias-panel"
 import { ActivacionPanel } from "@/components/contracts/activacion-panel"
+import { CierrePanel } from "@/components/contracts/cierre-panel"
+import { ReportesAvancePanel } from "@/components/contracts/reportes-avance-panel"
 
 export default function ContractDetailPage({
   params,
@@ -93,12 +95,22 @@ export default function ContractDetailPage({
           <TabsTrigger value="garantias">Garantías</TabsTrigger>
           <TabsTrigger value="documentacion">Documentación</TabsTrigger>
 
+          <TabsTrigger value="reportes-avance" disabled={esRegistrado} className="gap-1.5">
+            {esRegistrado && <Lock className="h-3 w-3" />}
+            Reportes de Avance
+          </TabsTrigger>
+
           <TabsTrigger value="estimaciones" disabled={esRegistrado} className="gap-1.5">
             {esRegistrado && <Lock className="h-3 w-3" />}
             Estimaciones
           </TabsTrigger>
 
           <TabsTrigger value="versiones">Versiones</TabsTrigger>
+
+          <TabsTrigger value="cierre" disabled={esRegistrado} className="gap-1.5">
+            {esRegistrado && <Lock className="h-3 w-3" />}
+            Cierre
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="datos" className="mt-4">
@@ -125,6 +137,14 @@ export default function ContractDetailPage({
           <DocumentosPanel contract={contract} />
         </TabsContent>
 
+        <TabsContent value="reportes-avance" className="mt-4">
+          {esRegistrado ? (
+            <TabBloqueada mensaje="Los reportes de avance solo están disponibles cuando el contrato está activo." />
+          ) : (
+            <ReportesAvancePanel contract={contract} />
+          )}
+        </TabsContent>
+
         <TabsContent value="estimaciones" className="mt-4">
           {esRegistrado ? (
             <TabBloqueada mensaje="Las estimaciones solo están disponibles cuando el contrato está activo." />
@@ -135,6 +155,14 @@ export default function ContractDetailPage({
 
         <TabsContent value="versiones" className="mt-4">
           <VersionesPanel contract={contract} />
+        </TabsContent>
+
+        <TabsContent value="cierre" className="mt-4">
+          {esRegistrado ? (
+            <TabBloqueada mensaje="El proceso de cierre solo está disponible cuando el contrato está activo o en cierre." />
+          ) : (
+            <CierrePanel contract={contract} />
+          )}
         </TabsContent>
       </Tabs>
     </div>
